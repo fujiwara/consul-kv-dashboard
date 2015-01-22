@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Consul KV Dashboard</title>
+    <script src="http://cdnjs.cloudflare.com/ajax/libs/react/0.12.1/react.js"></script>
+    <script src="http://cdnjs.cloudflare.com/ajax/libs/react/0.12.1/JSXTransformer.js"></script>
+    <script src="http://cdnjs.cloudflare.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
+    <script src="http://cdnjs.cloudflare.com/ajax/libs/showdown/0.3.1/showdown.min.js"></script>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.2/css/bootstrap.min.css">
+    <style type="text/css">
+      pre {
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        overflow: auto;
+      }
+      .item_body {
+        max-height: 10em;
+        font-size: 0.8em;
+        cursor: pointer;
+      }
+      .item_body_expanded {
+        font-size: 0.8em;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="content" class="container"></div>
+    <script type="text/jsx;harmony=true" src="scripts/dashboard.js"></script>
+  </body>
+</html>

@@ -1,4 +1,4 @@
-consul-kv-dashboard: *.go
+consul-kv-dashboard: *.go bindata.go
 	stringer -type=Status
 	go build
 

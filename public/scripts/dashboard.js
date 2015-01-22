@@ -136,7 +136,7 @@ var Dashboard = React.createClass({
   render: function() {
     return (
       <div>
-        <h1>Dashborad</h1>
+        <h1>Dashboard</h1>
         <Categories data={this.state.categories} currentCategory={this.state.currentCategory} updateCategory={this.updateCategory}/>
         <table className="table table-striped">
           <thead>

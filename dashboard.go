@@ -35,9 +35,9 @@ type Status int64
 
 const (
 	Success Status = iota
-	Info
 	Warning
 	Danger
+	Info
 )
 
 func (s Status) MarshalText() ([]byte, error) {

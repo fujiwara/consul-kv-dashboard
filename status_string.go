@@ -4,9 +4,9 @@ package main
 
 import "fmt"
 
-const _Status_name = "SuccessInfoWarningDanger"
+const _Status_name = "SuccessWarningDangerInfo"
 
-var _Status_index = [...]uint8{7, 11, 18, 24}
+var _Status_index = [...]uint8{7, 14, 20, 24}
 
 func (i Status) String() string {
 	if i < 0 || i >= Status(len(_Status_index)) {

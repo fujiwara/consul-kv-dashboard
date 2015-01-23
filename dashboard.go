@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,11 +17,12 @@ import (
 )
 
 var (
-	Namespace  = "dashboard"
-	ConsulAddr = "127.0.0.1:8500"
-	Version    string
-	Nodes      []Node
-	mutex      sync.Mutex
+	Namespace   = "dashboard"
+	ConsulAddr  = "127.0.0.1:8500"
+	Version     string
+	ExtAssetDir string
+	Nodes       []Node
+	mutex       sync.Mutex
 )
 
 type KVPair struct {
@@ -83,12 +86,11 @@ type Node struct {
 func main() {
 	var (
 		port        int
-		assetDir    string
 		showVersion bool
 	)
 	flag.StringVar(&Namespace, "namespace", Namespace, "Consul kv top level key name. (/v1/kv/{namespace}/...)")
 	flag.IntVar(&port, "port", 3000, "http listen port")
-	flag.StringVar(&assetDir, "asset", "", "Serve files located in /assets from local directory. If not specified, use built-in asset.")
+	flag.StringVar(&ExtAssetDir, "asset", "", "Serve files located in /assets from local directory. If not specified, use built-in asset.")
 	flag.BoolVar(&showVersion, "v", false, "show vesion")
 	flag.BoolVar(&showVersion, "version", false, "show vesion")
 	flag.Parse()
@@ -102,9 +104,9 @@ func main() {
 	mux.HandleFunc("/", indexPage)
 	mux.HandleFunc("/api/", kvApiProxy)
 
-	if assetDir != "" {
+	if ExtAssetDir != "" {
 		mux.Handle("/assets/",
-			http.StripPrefix("/assets/", http.FileServer(http.Dir(assetDir))))
+			http.StripPrefix("/assets/", http.FileServer(http.Dir(ExtAssetDir))))
 	} else {
 		mux.Handle("/assets/",
 			http.FileServer(NewAssetFileSystem("/assets/")))
@@ -113,13 +115,23 @@ func main() {
 
 	go updateNodeList()
 	log.Println("listen port:", port)
-	log.Println("asset directory:", assetDir)
+	log.Println("asset directory:", ExtAssetDir)
 	log.Println("namespace:", Namespace)
 	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(port), nil))
 }
 
 func indexPage(w http.ResponseWriter, r *http.Request) {
-	data, err := Asset("index.html")
+	var (
+		data []byte
+		err  error
+	)
+	if ExtAssetDir == "" {
+		data, err = Asset("index.html")
+	} else {
+		var f *os.File
+		f, err = os.Open(ExtAssetDir + "/index.html")
+		data, err = ioutil.ReadAll(f)
+	}
 	if err != nil {
 		log.Println(err)
 	}

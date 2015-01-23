@@ -1,0 +1,17 @@
+pre {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow: auto;
+}
+.item_body {
+    max-height: 10em;
+    font-size: 0.8em;
+    cursor: pointer;
+}
+.item_body_expanded {
+    font-size: 0.8em;
+    cursor: pointer;
+}
+.item_data_col {
+    width: 50%;
+}

@@ -34,7 +34,7 @@ var Category = React.createClass({
   render: function() {
     var active = this.props.currentCategory == this.props.name ? "active" : "";
     return (
-      <li role="presentation" className={active}><a onClick={this.handleClick}>{this.props.name}</a></li>
+      <li key={this.props.name} role="presentation" className={active}><a onClick={this.handleClick}>{this.props.name}</a></li>
     );
   }
 });
@@ -48,7 +48,7 @@ var Categories = React.createClass({
     var handleChange = this.handleChange
     var cats = this.props.data.map(function(cat, index) {
       return (
-        <Category key={index} name={cat} currentCategory={currentCategory} updateCategory={handleChange}/>
+        <Category key={cat} name={cat} currentCategory={currentCategory} updateCategory={handleChange}/>
       );
     });
     return (

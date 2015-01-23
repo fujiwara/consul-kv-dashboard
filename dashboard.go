@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -14,9 +15,10 @@ import (
 )
 
 var (
-	Namespace = "dashboard"
-	Nodes     []Node
-	mutex     sync.Mutex
+	Namespace  = "dashboard"
+	ConsulAddr = "127.0.0.1:8500"
+	Nodes      []Node
+	mutex      sync.Mutex
 )
 
 type KVPair struct {
@@ -32,13 +34,13 @@ type Status int64
 
 const (
 	Success Status = iota
+	Info
 	Warning
 	Danger
-	Unknown
 )
 
 func (s Status) MarshalText() ([]byte, error) {
-	if s <= Unknown {
+	if s <= Danger {
 		return []byte(strings.ToLower(s.String())), nil
 	} else {
 		return []byte(strconv.FormatInt(int64(s), 10)), nil
@@ -50,6 +52,7 @@ type Item struct {
 	Address   string `json:"address"`
 	Timestamp string `json:"timestamp"`
 	Status    Status `json:"status"`
+	Key       string `json:"key"`
 	Data      string `json:"data"`
 }
 
@@ -59,9 +62,14 @@ func (kv *KVPair) NewItem() Item {
 		Timestamp: time.Unix(kv.Flags/1000, 0).Format(time.RFC3339),
 	}
 	item.Status = Status(kv.Flags % 1000)
+
+	// kv.Key : {namespace}/{category}/{node}/{key}
 	path := strings.Split(kv.Key, "/")
 	if len(path) >= 3 {
 		item.Node = path[2]
+	}
+	if len(path) >= 4 {
+		item.Key = path[3]
 	}
 	return item
 }
@@ -72,15 +80,33 @@ type Node struct {
 }
 
 func main() {
-	go updateNodeList()
+	var (
+		port     int
+		assetDir string
+	)
+	flag.StringVar(&Namespace, "namespace", Namespace, "Consul kv top level key name. (/v1/kv/{namespace}/...)")
+	flag.IntVar(&port, "port", 3000, "http listen port")
+	flag.StringVar(&assetDir, "asset", "", "Serve files located in /assets from local directory. If not specified, use built-in asset.")
+	flag.Parse()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", indexPage)
 	mux.HandleFunc("/api/", kvApiProxy)
-	mux.Handle("/scripts/", http.FileServer(AssetFileSystem{}))
+
+	if assetDir != "" {
+		mux.Handle("/assets/",
+			http.StripPrefix("/assets/", http.FileServer(http.Dir(assetDir))))
+	} else {
+		mux.Handle("/assets/",
+			http.FileServer(NewAssetFileSystem("/assets/")))
+	}
 	http.Handle("/", mux)
 
-	log.Fatal(http.ListenAndServe(":3000", nil))
+	go updateNodeList()
+	log.Println("listen port:", port)
+	log.Println("asset directory:", assetDir)
+	log.Println("namespace:", Namespace)
+	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(port), nil))
 }
 
 func indexPage(w http.ResponseWriter, r *http.Request) {
@@ -102,6 +128,11 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		w.Header().Set("Content-Type", "application/json")
+		http.Error(w, "[]", resp.StatusCode)
+		return
+	}
 	if resp.StatusCode != http.StatusOK {
 		http.Error(w, "", resp.StatusCode)
 		io.Copy(w, resp.Body)
@@ -179,7 +210,7 @@ func updateNodeList() {
 
 func callConsulAPI(path string) (*http.Response, int64, error) {
 	var index int64
-	_url := "http://localhost:8500" + path
+	_url := "http://" + ConsulAddr + path
 	log.Println("[info] get", _url)
 	resp, err := http.Get(_url)
 	if err != nil {

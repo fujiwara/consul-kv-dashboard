@@ -9,6 +9,14 @@ import (
 )
 
 type AssetFileSystem struct {
+	Prefix string
+}
+
+func NewAssetFileSystem(prefix string) AssetFileSystem {
+	if prefix == "" {
+		prefix = "/"
+	}
+	return AssetFileSystem{Prefix: prefix}
 }
 
 type AssetFile struct {
@@ -18,8 +26,7 @@ type AssetFile struct {
 
 func (fs AssetFileSystem) Open(name string) (http.File, error) {
 	path := name
-	path = strings.TrimLeft(path, "/")
-	log.Println("open asset", path)
+	path = strings.TrimPrefix(path, fs.Prefix)
 	data, err := Asset(path)
 	if err != nil {
 		log.Println(err)
@@ -30,7 +37,6 @@ func (fs AssetFileSystem) Open(name string) (http.File, error) {
 		bytes.NewReader(data),
 		info,
 	}
-	log.Printf("%#v", file)
 	return file, nil
 }
 

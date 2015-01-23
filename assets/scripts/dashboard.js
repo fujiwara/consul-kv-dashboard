@@ -1,44 +1,80 @@
-
-var Category = React.createClass({
+var StatusSelector = React.createClass({
+  handleChange: function(event) {
+    this.props.updateStatusFilter(event.target.value)
+  },
   render: function() {
     return (
-     <option value={this.props.name}>{this.props.name}</option>
-    )
+      <div>
+          <nav className="navbar navbar-default">
+            <div className="container">
+              <button type="button" value="" className="btn btn-default navbar-btn" onClick={this.handleChange}>Any</button>
+              <button type="button" value="success" className="btn btn-default navbar-btn alert-success" onClick={this.handleChange}>Success</button>
+              <button type="button" value="warning" className="btn btn-default navbar-btn alert-warning" onClick={this.handleChange}>Warning</button>
+              <button type="button" value="danger" className="btn btn-default navbar-btn alert-danger" onClick={this.handleChange}>Dagner</button>
+              <button type="button" value="info" className="btn btn-default navbar-btn alert-info" onClick={this.handleChange}>Info</button>
+            </div>
+          </nav>
+      </div>
+    );
+  }
+});
+
+var Title = React.createClass({
+  render: function() {
+    return (
+      <span>: {this.props.category}</span>
+    );
+  }
+});
+
+var Category = React.createClass({
+  handleClick: function(event) {
+    this.props.updateCategory(this.props.name)
+  },
+  render: function() {
+    var active = this.props.currentCategory == this.props.name ? "active" : "";
+    return (
+      <li role="presentation" className={active}><a onClick={this.handleClick}>{this.props.name}</a></li>
+    );
   }
 });
 
 var Categories = React.createClass({
-  handleChange: function(event) {
-    this.props.updateCategory(event.target.value)
+  handleChange: function(cat) {
+    this.props.updateCategory(cat)
   },
   render: function() {
+    var currentCategory = this.props.currentCategory
+    var handleChange = this.handleChange
     var cats = this.props.data.map(function(cat, index) {
       return (
-        <Category key={index} name={cat}/>
+        <Category key={index} name={cat} currentCategory={currentCategory} updateCategory={handleChange}/>
       );
     });
     return (
-      <select name="category" value={this.props.currentCategory} onChange={this.handleChange}>
+      <ul className="nav nav-tabs">
         {cats}
-      </select>
+      </ul>
     );
   }
 });
 
 var Item = React.createClass({
   render: function() {
+    var item = this.props.item;
     var icon = "glyphicon";
-    var status = this.props.status;
-    if (this.props.status != "success") {
+    var status = item.status;
+    if (item.status != "success" && item.status != "info") {
       icon += " glyphicon-alert";
-      status += " alert-" + this.props.status;
+      status += " alert-" + item.status;
     }
     return (
-      <tr className={status}>
-        <td><span className={icon} /> {this.props.node}</td>
-        <td>{this.props.address}</td>
-        <td>{this.props.timestamp}</td>
-        <td><ItemBody>{this.props.children}</ItemBody></td>
+      <tr className={status} title={status}>
+        <td><span className={icon} /> {item.node}</td>
+        <td>{item.address}</td>
+        <td>{item.key}</td>
+        <td>{item.timestamp}</td>
+        <td><ItemBody>{item.data}</ItemBody></td>
       </tr>
     );
   }
@@ -60,7 +96,25 @@ var ItemBody = React.createClass({
       <pre className={classString} onClick={this.handleClick}>{this.props.children}</pre>
     );
   }
-})
+});
+
+var ItemList = React.createClass({
+  render: function() {
+    var itemNodes = this.props.data.map(function(item, index) {
+      if (item.hide) {
+        return;
+      }
+      return (
+        <Item key={index} item={item} />
+      );
+    });
+    return (
+      <tbody className="itemList">
+        {itemNodes}
+      </tbody>
+    );
+  }
+});
 
 var Dashboard = React.createClass({
   loadCategoriesFromServer: function() {
@@ -76,13 +130,12 @@ var Dashboard = React.createClass({
     });
   },
   loadDashboardFromServer: function() {
-    console.log("loadDashboardFromServer: ", this.state.currentCategory)
     if (!this.state.currentCategory) {
         setTimeout(this.loadDashboardFromServer, this.props.pollWait / 5);
         return
     }
     var ajax = $.ajax({
-      url: "/api/" + this.state.currentCategory + "?recurse&wait=55s&index=" + this.state.index,
+      url: "/api/" + this.state.currentCategory + "?recurse&wait=55s&index=" + this.state.index || 0,
       dataType: 'json',
       success: function(data, textStatus, request) {
         var timer = setTimeout(this.loadDashboardFromServer, this.props.pollWait);
@@ -111,7 +164,8 @@ var Dashboard = React.createClass({
       categories: [],
       index: 0,
       ajax: undefined,
-      timer: undefined
+      timer: undefined,
+      statusFilter: ""
     };
   },
   componentDidMount: function() {
@@ -133,35 +187,40 @@ var Dashboard = React.createClass({
       timer: undefined
     });
   },
+  updateStatusFilter: function(status) {
+    var items = this.state.items.map(function(item, index) {
+      if (status == "") {
+        item.hide = false
+        return item
+      }
+      if (item.status != status) {
+        item.hide = true
+      } else {
+        item.hide = false
+      }
+      return item;
+    });
+    this.setState({ items: items, statusFilter: status });
+  },
   render: function() {
     return (
       <div>
-        <h1>Dashboard</h1>
+        <h1>Dashboard <Title category={this.state.currentCategory} /></h1>
         <Categories data={this.state.categories} currentCategory={this.state.currentCategory} updateCategory={this.updateCategory}/>
-        <table className="table table-striped">
+        <StatusSelector status={this.state.statusFilter} updateStatusFilter={this.updateStatusFilter}/>
+        <table className="table table-bordered">
           <thead>
-            <tr><th>node</th><th>address</th><th>timestamp</th><th>data</th></tr>
+            <tr>
+              <th>node</th>
+              <th>address</th>
+              <th>key</th>
+              <th>timestamp</th>
+              <th className="item_data_col">data</th>
+            </tr>
           </thead>
           <ItemList data={this.state.items} />
         </table>
       </div>
-    );
-  }
-});
-
-var ItemList = React.createClass({
-  render: function() {
-    var itemNodes = this.props.data.map(function(item, index) {
-      return (
-        <Item key={item.node} node={item.node} address={item.address} timestamp={item.timestamp} status={item.status}>
-          {item.data}
-        </Item>
-      );
-    });
-    return (
-      <tbody className="itemList">
-        {itemNodes}
-      </tbody>
     );
   }
 });

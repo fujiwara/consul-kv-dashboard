@@ -17,6 +17,7 @@ import (
 var (
 	Namespace  = "dashboard"
 	ConsulAddr = "127.0.0.1:8500"
+	Version    string
 	Nodes      []Node
 	mutex      sync.Mutex
 )
@@ -81,13 +82,21 @@ type Node struct {
 
 func main() {
 	var (
-		port     int
-		assetDir string
+		port        int
+		assetDir    string
+		showVersion bool
 	)
 	flag.StringVar(&Namespace, "namespace", Namespace, "Consul kv top level key name. (/v1/kv/{namespace}/...)")
 	flag.IntVar(&port, "port", 3000, "http listen port")
 	flag.StringVar(&assetDir, "asset", "", "Serve files located in /assets from local directory. If not specified, use built-in asset.")
+	flag.BoolVar(&showVersion, "v", false, "show vesion")
+	flag.BoolVar(&showVersion, "version", false, "show vesion")
 	flag.Parse()
+
+	if showVersion {
+		fmt.Println("consul-kv-dashboard: version:", Version)
+		return
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", indexPage)

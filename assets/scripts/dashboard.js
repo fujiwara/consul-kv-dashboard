@@ -34,7 +34,7 @@ var Category = React.createClass({
   render: function() {
     var active = this.props.currentCategory == this.props.name ? "active" : "";
     return (
-      <li key={this.props.name} role="presentation" className={active}><a onClick={this.handleClick}>{this.props.name}</a></li>
+      <li role="presentation" className={active}><a onClick={this.handleClick}>{this.props.name}</a></li>
     );
   }
 });
@@ -48,7 +48,7 @@ var Categories = React.createClass({
     var handleChange = this.handleChange
     var cats = this.props.data.map(function(cat, index) {
       return (
-        <Category key={cat} name={cat} currentCategory={currentCategory} updateCategory={handleChange}/>
+        <Category key={index} name={cat} currentCategory={currentCategory} updateCategory={handleChange}/>
       );
     });
     return (
@@ -117,6 +117,18 @@ var ItemList = React.createClass({
 });
 
 var Dashboard = React.createClass({
+  setHideFlag: function(item, status) {
+    if (status == "") {
+      item.hide = false;
+      return item;
+    }
+    if (item.status != status) {
+      item.hide = true;
+    } else {
+      item.hide = false;
+    }
+    return item;
+  },
   loadCategoriesFromServer: function() {
     $.ajax({
       url: "/api/?keys",
@@ -132,16 +144,21 @@ var Dashboard = React.createClass({
   loadDashboardFromServer: function() {
     if (!this.state.currentCategory) {
         setTimeout(this.loadDashboardFromServer, this.props.pollWait / 5);
-        return
+        return;
     }
+    var setHideFlag = this.setHideFlag;
+    var statusFilter = this.state.statusFilter;
     var ajax = $.ajax({
       url: "/api/" + this.state.currentCategory + "?recurse&wait=55s&index=" + this.state.index || 0,
       dataType: 'json',
       success: function(data, textStatus, request) {
         var timer = setTimeout(this.loadDashboardFromServer, this.props.pollWait);
         var index = request.getResponseHeader('X-Consul-Index')
+        var items = data.map(function(item, index) {
+          return setHideFlag(item, statusFilter)
+        });
         this.setState({
-          items: data,
+          items: items,
           index: index,
           timer: timer,
         });
@@ -188,17 +205,9 @@ var Dashboard = React.createClass({
     });
   },
   updateStatusFilter: function(status) {
+    var setHideFlag = this.setHideFlag;
     var items = this.state.items.map(function(item, index) {
-      if (status == "") {
-        item.hide = false
-        return item
-      }
-      if (item.status != status) {
-        item.hide = true
-      } else {
-        item.hide = false
-      }
-      return item;
+      return setHideFlag(item, status)
     });
     this.setState({ items: items, statusFilter: status });
   },

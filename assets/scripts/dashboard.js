@@ -223,7 +223,7 @@ var Dashboard = React.createClass({
               <th>node</th>
               <th>address</th>
               <th>key</th>
-              <th>timestamp</th>
+              <th className="item_timestamp_col">timestamp</th>
               <th className="item_data_col">data</th>
             </tr>
           </thead>

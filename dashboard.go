@@ -63,7 +63,7 @@ type Item struct {
 func (kv *KVPair) NewItem() Item {
 	item := Item{
 		Data:      string(kv.Value),
-		Timestamp: time.Unix(kv.Flags/1000, 0).Format(time.RFC3339),
+		Timestamp: time.Unix(kv.Flags/1000, 0).Format("2006-01-02 15:04:05 -0700"),
 	}
 	item.Status = Status(kv.Flags % 1000)
 

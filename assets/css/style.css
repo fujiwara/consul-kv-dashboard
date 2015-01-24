@@ -13,5 +13,8 @@ pre {
     cursor: pointer;
 }
 .item_data_col {
-    width: 50%;
+    min-width: 60%;
+}
+.item_timestamp_col {
+    width: 10em;
 }

@@ -4,7 +4,7 @@ pre {
     overflow: auto;
 }
 .item_body {
-    max-height: 10em;
+    max-height: 6em;
     font-size: 0.8em;
     cursor: pointer;
 }
@@ -13,7 +13,7 @@ pre {
     cursor: pointer;
 }
 .item_data_col {
-    min-width: 60%;
+    width: 50%;
 }
 .item_timestamp_col {
     width: 10em;

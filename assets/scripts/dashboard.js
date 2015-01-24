@@ -69,13 +69,15 @@ var Item = React.createClass({
       status += " alert-" + item.status;
     }
     return (
-      <tr className={status} title={status}>
-        <td><span className={icon} /> {item.node}</td>
-        <td>{item.address}</td>
-        <td>{item.key}</td>
-        <td>{item.timestamp}</td>
-        <td><ItemBody>{item.data}</ItemBody></td>
-      </tr>
+      <tbody>
+        <tr className={status} title={status}>
+          <td><span className={icon} /> {item.node}</td>
+          <td>{item.address}</td>
+          <td>{item.key}</td>
+          <td>{item.timestamp}</td>
+          <td><ItemBody>{item.data}</ItemBody></td>
+        </tr>
+      </tbody>
     );
   }
 });
@@ -98,37 +100,7 @@ var ItemBody = React.createClass({
   }
 });
 
-var ItemList = React.createClass({
-  render: function() {
-    var itemNodes = this.props.data.map(function(item, index) {
-      if (item.hide) {
-        return;
-      }
-      return (
-        <Item key={index} item={item} />
-      );
-    });
-    return (
-      <tbody className="itemList">
-        {itemNodes}
-      </tbody>
-    );
-  }
-});
-
 var Dashboard = React.createClass({
-  setHideFlag: function(item, status) {
-    if (status == "") {
-      item.hide = false;
-      return item;
-    }
-    if (item.status != status) {
-      item.hide = true;
-    } else {
-      item.hide = false;
-    }
-    return item;
-  },
   loadCategoriesFromServer: function() {
     $.ajax({
       url: "/api/?keys",
@@ -146,7 +118,6 @@ var Dashboard = React.createClass({
         setTimeout(this.loadDashboardFromServer, this.props.pollWait / 5);
         return;
     }
-    var setHideFlag = this.setHideFlag;
     var statusFilter = this.state.statusFilter;
     var ajax = $.ajax({
       url: "/api/" + this.state.currentCategory + "?recurse&wait=55s&index=" + this.state.index || 0,
@@ -154,11 +125,8 @@ var Dashboard = React.createClass({
       success: function(data, textStatus, request) {
         var timer = setTimeout(this.loadDashboardFromServer, this.props.pollWait);
         var index = request.getResponseHeader('X-Consul-Index')
-        var items = data.map(function(item, index) {
-          return setHideFlag(item, statusFilter)
-        });
         this.setState({
-          items: items,
+          items: data,
           index: index,
           timer: timer,
         });
@@ -204,14 +172,20 @@ var Dashboard = React.createClass({
       timer: undefined
     });
   },
-  updateStatusFilter: function(status) {
-    var setHideFlag = this.setHideFlag;
-    var items = this.state.items.map(function(item, index) {
-      return setHideFlag(item, status)
-    });
-    this.setState({ items: items, statusFilter: status });
+  updateStatusFilter: function(filter) {
+    this.setState({ statusFilter: filter });
   },
   render: function() {
+    var filter = this.state.statusFilter;
+    var items = this.state.items.map(function(item, index) {
+      if (filter == "" || item.status == filter) {
+        return (
+          <Item key={index} item={item} />
+        );
+      } else {
+        return;
+      }
+    });
     return (
       <div>
         <h1>Dashboard <Title category={this.state.currentCategory} /></h1>
@@ -224,10 +198,10 @@ var Dashboard = React.createClass({
               <th>address</th>
               <th>key</th>
               <th className="item_timestamp_col">timestamp</th>
-              <th className="item_data_col">data</th>
+              <th className="item_data_col"></th>
             </tr>
           </thead>
-          <ItemList data={this.state.items} />
+          {items}
         </table>
       </div>
     );

@@ -6,7 +6,7 @@ consul-kv-dashboard: dashboard.go bindata.go
 	stringer -type=Status
 	go build
 
-bindata.go: assets/index.html assets/scripts/dashboard.js
+bindata.go: assets/index.html assets/scripts/dashboard.js assets/css/style.css
 	go-bindata -prefix=assets assets/...
 
 packages: bindata.go dashboard.go
@@ -14,4 +14,4 @@ packages: bindata.go dashboard.go
 	cd pkg && find . -name "*${GIT_VER}*" -type f -exec zip {}.zip {} \;
 
 clean:
-	rm -fr pkg/*
+	rm -fr pkg/* consul-kv-dashboard

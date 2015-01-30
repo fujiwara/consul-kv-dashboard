@@ -75,7 +75,9 @@ var Item = React.createClass({
           <td>{item.address}</td>
           <td>{item.key}</td>
           <td>{item.timestamp}</td>
-          <td><ItemBody>{item.data}</ItemBody></td>
+        </tr>
+        <tr className={status}>
+          <td colSpan={4}><ItemBody>{item.data}</ItemBody></td>
         </tr>
       </tbody>
     );
@@ -198,7 +200,6 @@ var Dashboard = React.createClass({
               <th>address</th>
               <th>key</th>
               <th className="item_timestamp_col">timestamp</th>
-              <th className="item_data_col"></th>
             </tr>
           </thead>
           {items}

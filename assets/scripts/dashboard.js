@@ -108,7 +108,11 @@ var Dashboard = React.createClass({
       url: "/api/?keys",
       dataType: 'json',
       success: function(data, textStatus, request) {
-        this.setState({categories: data, currentCategory: data[0]})
+        if (!this.state.currentCategory) {
+          location.pathname = "/" + data[0]
+        } else {
+          this.setState({categories: data})
+        }
       }.bind(this),
       error: function(xhr, status, err) {
         console.error("/api/?keys", status, err.toString());
@@ -146,13 +150,18 @@ var Dashboard = React.createClass({
     this.setState({ajax: ajax})
   },
   getInitialState: function() {
+    var cat = location.pathname.replace(/^\//,"")
+    if (cat == "") {
+      cat = undefined
+    }
     return {
       items: [],
       categories: [],
       index: 0,
       ajax: undefined,
       timer: undefined,
-      statusFilter: ""
+      statusFilter: "",
+      currentCategory: cat
     };
   },
   componentDidMount: function() {
@@ -163,16 +172,7 @@ var Dashboard = React.createClass({
     if (this.state.ajax) {
       this.state.ajax.abort()
     }
-    if (this.state.timer) {
-      clearTimeout(this.state.timer)
-    }
-    this.setState({
-      index: 0,
-      items: [],
-      currentCategory: cat,
-      ajax: undefined,
-      timer: undefined
-    });
+    location.pathname = "/" + cat
   },
   updateStatusFilter: function(filter) {
     this.setState({ statusFilter: filter });

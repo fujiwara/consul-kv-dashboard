@@ -86,6 +86,9 @@ var Item = React.createClass({
 
 var ItemBody = React.createClass({
   handleClick: function() {
+    if ( this.state.expanded && window.getSelection().toString() != "" ) {
+      return;
+    }
     this.setState({ expanded: !this.state.expanded })
   },
   getInitialState: function() {

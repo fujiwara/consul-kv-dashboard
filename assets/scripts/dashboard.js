@@ -2,16 +2,22 @@ var StatusSelector = React.createClass({
   handleChange: function(event) {
     this.props.updateStatusFilter(event.target.value)
   },
+  handleGrep: function(event) {
+    this.props.updateNodeFilter(event.target.value)
+  },
   render: function() {
     return (
       <div>
           <nav className="navbar navbar-default">
             <div className="container">
-              <button type="button" value="" className="btn btn-default navbar-btn" onClick={this.handleChange}>Any</button>
-              <button type="button" value="success" className="btn btn-default navbar-btn alert-success" onClick={this.handleChange}>Success</button>
-              <button type="button" value="warning" className="btn btn-default navbar-btn alert-warning" onClick={this.handleChange}>Warning</button>
-              <button type="button" value="danger" className="btn btn-default navbar-btn alert-danger" onClick={this.handleChange}>Dagner</button>
-              <button type="button" value="info" className="btn btn-default navbar-btn alert-info" onClick={this.handleChange}>Info</button>
+              <form className="form-inline">
+                <button type="button" value="" className="btn btn-default navbar-btn" onClick={this.handleChange}>Any</button>
+                <button type="button" value="success" className="btn btn-default navbar-btn alert-success" onClick={this.handleChange}>Success</button>
+                <button type="button" value="warning" className="btn btn-default navbar-btn alert-warning" onClick={this.handleChange}>Warning</button>
+                <button type="button" value="danger" className="btn btn-default navbar-btn alert-danger" onClick={this.handleChange}>Dagner</button>
+                <button type="button" value="info" className="btn btn-default navbar-btn alert-info" onClick={this.handleChange}>Info</button>
+                <input type="text" id="nodeFilter" className="form-control" placeholder="nodename"  onKeyUp={this.handleGrep}/>
+              </form>
             </div>
           </nav>
       </div>
@@ -164,6 +170,7 @@ var Dashboard = React.createClass({
       ajax: undefined,
       timer: undefined,
       statusFilter: "",
+      nodeFilter: "",
       currentCategory: cat
     };
   },
@@ -180,10 +187,14 @@ var Dashboard = React.createClass({
   updateStatusFilter: function(filter) {
     this.setState({ statusFilter: filter });
   },
+  updateNodeFilter: function(filter) {
+    this.setState({ nodeFilter: filter });
+  },
   render: function() {
-    var filter = this.state.statusFilter;
+    var statusFilter = this.state.statusFilter;
+    var nodeFilter = this.state.nodeFilter;
     var items = this.state.items.map(function(item, index) {
-      if (filter == "" || item.status == filter) {
+      if ((statusFilter == "" || item.status == statusFilter) && (nodeFilter == "" || item.node.indexOf(nodeFilter) != -1 )) {
         return (
           <Item key={index} item={item} />
         );
@@ -195,7 +206,7 @@ var Dashboard = React.createClass({
       <div>
         <h1>Dashboard <Title category={this.state.currentCategory} /></h1>
         <Categories data={this.state.categories} currentCategory={this.state.currentCategory} updateCategory={this.updateCategory}/>
-        <StatusSelector status={this.state.statusFilter} updateStatusFilter={this.updateStatusFilter}/>
+        <StatusSelector status={this.state.statusFilter} updateStatusFilter={this.updateStatusFilter} updateNodeFilter={this.updateNodeFilter}/>
         <table className="table table-bordered">
           <thead>
             <tr>

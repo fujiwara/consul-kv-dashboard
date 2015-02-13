@@ -34,27 +34,22 @@ var Title = React.createClass({
 });
 
 var Category = React.createClass({
-  handleClick: function(event) {
-    this.props.updateCategory(this.props.name)
-  },
   render: function() {
     var active = this.props.currentCategory == this.props.name ? "active" : "";
+    var href = "/" + this.props.name;
     return (
-      <li role="presentation" className={active}><a onClick={this.handleClick}>{this.props.name}</a></li>
+      <li role="presentation" className={active}><a href={href}>{this.props.name}</a></li>
     );
   }
 });
 
 var Categories = React.createClass({
-  handleChange: function(cat) {
-    this.props.updateCategory(cat)
-  },
   render: function() {
     var currentCategory = this.props.currentCategory
     var handleChange = this.handleChange
     var cats = this.props.data.map(function(cat, index) {
       return (
-        <Category key={index} name={cat} currentCategory={currentCategory} updateCategory={handleChange}/>
+        <Category key={index} name={cat} currentCategory={currentCategory}/>
       );
     });
     return (
@@ -178,12 +173,6 @@ var Dashboard = React.createClass({
     this.loadCategoriesFromServer();
     this.loadDashboardFromServer();
   },
-  updateCategory: function(cat) {
-    if (this.state.ajax) {
-      this.state.ajax.abort()
-    }
-    location.pathname = "/" + cat
-  },
   updateStatusFilter: function(filter) {
     this.setState({ statusFilter: filter });
   },
@@ -205,7 +194,7 @@ var Dashboard = React.createClass({
     return (
       <div>
         <h1>Dashboard <Title category={this.state.currentCategory} /></h1>
-        <Categories data={this.state.categories} currentCategory={this.state.currentCategory} updateCategory={this.updateCategory}/>
+        <Categories data={this.state.categories} currentCategory={this.state.currentCategory} />
         <StatusSelector status={this.state.statusFilter} updateStatusFilter={this.updateStatusFilter} updateNodeFilter={this.updateNodeFilter}/>
         <table className="table table-bordered">
           <thead>

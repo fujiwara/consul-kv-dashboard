@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -89,12 +91,14 @@ func main() {
 	var (
 		port        int
 		showVersion bool
+		trigger     string
 	)
 	flag.StringVar(&Namespace, "namespace", Namespace, "Consul kv top level key name. (/v1/kv/{namespace}/...)")
 	flag.IntVar(&port, "port", 3000, "http listen port")
 	flag.StringVar(&ExtAssetDir, "asset", "", "Serve files located in /assets from local directory. If not specified, use built-in asset.")
 	flag.BoolVar(&showVersion, "v", false, "show vesion")
 	flag.BoolVar(&showVersion, "version", false, "show vesion")
+	flag.StringVar(&trigger, "trigger", "", "trigger command")
 	flag.Parse()
 
 	if showVersion {
@@ -115,11 +119,15 @@ func main() {
 	}
 	http.Handle("/", mux)
 
-	go updateNodeList()
-	go watchForTrigger()
 	log.Println("listen port:", port)
 	log.Println("asset directory:", ExtAssetDir)
 	log.Println("namespace:", Namespace)
+	if trigger != "" {
+		log.Println("trigger:", trigger)
+		go watchForTrigger(trigger)
+	}
+	go updateNodeList()
+
 	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(port), nil))
 }
 
@@ -204,7 +212,7 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func watchForTrigger() {
+func watchForTrigger(command string) {
 	var index int64
 	lastStatus := make(map[string]Status)
 	for {
@@ -222,30 +230,76 @@ func watchForTrigger() {
 		dec := json.NewDecoder(resp.Body)
 		dec.Decode(&kvps)
 
-		currentStatus := make(map[string]Status)
+		currentItem := make(map[string]Item)
 		for _, kv := range kvps {
 			item := kv.NewItem()
 			if !itemInNodes(&item) {
 				continue
 			}
-			if _, exist := currentStatus[item.Category]; !exist {
-				currentStatus[item.Category] = item.Status
-			} else if currentStatus[item.Category] < item.Status {
-				currentStatus[item.Category] = item.Status
+			if _, exist := currentItem[item.Category]; !exist {
+				currentItem[item.Category] = item
+			} else if currentItem[item.Category].Status < item.Status {
+				currentItem[item.Category] = item
 			}
 		}
-		for category, status := range currentStatus {
+		for category, item := range currentItem {
 			if _, exist := lastStatus[category]; !exist {
 				// at first initialze
-				lastStatus[category] = status
-			} else if lastStatus[category] != status {
+				lastStatus[category] = item.Status
+				log.Printf("[info] %s: status %s", category, item.Status)
+			} else if lastStatus[category] != item.Status {
 				// status changed. invoking trigger.
-				log.Printf("%s status %s -> %s", category, lastStatus[category], status)
-				lastStatus[category] = status
+				log.Printf("[info] %s: status %s -> %s", category, lastStatus[category], item.Status)
+				lastStatus[category] = item.Status
+				b, _ := json.Marshal(item)
+				err := invokePipe(command, bytes.NewReader(b))
+				if err != nil {
+					log.Println("[error]", err)
+				}
 			}
 		}
 		time.Sleep(1 * time.Second)
 	}
+}
+
+func invokePipe(command string, src io.Reader) error {
+	log.Println("[info] Invoking command:", command)
+	cmd := exec.Command("sh", "-c", command)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+
+	err = cmd.Start()
+	if err != nil {
+		return err
+	}
+	cmdCh := make(chan error)
+	// src => stdin
+	go func() {
+		_, err := io.Copy(stdin, src)
+		if err != nil {
+			cmdCh <- err
+		}
+		stdin.Close()
+	}()
+	// wait for command exit
+	go func() {
+		cmdCh <- cmd.Wait()
+	}()
+	go io.Copy(os.Stdout, stdout)
+	go io.Copy(os.Stderr, stderr)
+
+	cmdErr := <-cmdCh
+	return cmdErr
 }
 
 func updateNodeList() {

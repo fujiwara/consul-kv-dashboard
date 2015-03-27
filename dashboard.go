@@ -52,6 +52,7 @@ func (s Status) MarshalText() ([]byte, error) {
 }
 
 type Item struct {
+	Category  string `json:"category"`
 	Node      string `json:"node"`
 	Address   string `json:"address"`
 	Timestamp string `json:"timestamp"`
@@ -69,6 +70,7 @@ func (kv *KVPair) NewItem() Item {
 
 	// kv.Key : {namespace}/{category}/{node}/{key}
 	path := strings.Split(kv.Key, "/")
+	item.Category = path[1]
 	if len(path) >= 3 {
 		item.Node = path[2]
 	}
@@ -114,6 +116,7 @@ func main() {
 	http.Handle("/", mux)
 
 	go updateNodeList()
+	go watchForTrigger()
 	log.Println("listen port:", port)
 	log.Println("asset directory:", ExtAssetDir)
 	log.Println("namespace:", Namespace)
@@ -193,17 +196,55 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 		items := make([]Item, 0, len(kvps))
 		for _, kv := range kvps {
 			item := kv.NewItem()
-			mutex.Lock()
-			for _, node := range Nodes {
-				if item.Node == node.Node {
-					item.Address = node.Address
-					items = append(items, item)
-					break
-				}
+			if itemInNodes(&item) {
+				items = append(items, item)
 			}
-			mutex.Unlock()
 		}
 		enc.Encode(items)
+	}
+}
+
+func watchForTrigger() {
+	var index int64
+	lastStatus := make(map[string]Status)
+	for {
+		resp, newIndex, err := callConsulAPI(
+			"/v1/kv/" + Namespace + "/?recurse&wait=55s&index=" + strconv.FormatInt(index, 10),
+		)
+		if err != nil {
+			log.Println("[error]", err)
+			time.Sleep(10 * time.Second)
+			continue
+		}
+		index = newIndex
+		defer resp.Body.Close()
+		var kvps []*KVPair
+		dec := json.NewDecoder(resp.Body)
+		dec.Decode(&kvps)
+
+		currentStatus := make(map[string]Status)
+		for _, kv := range kvps {
+			item := kv.NewItem()
+			if !itemInNodes(&item) {
+				continue
+			}
+			if _, exist := currentStatus[item.Category]; !exist {
+				currentStatus[item.Category] = item.Status
+			} else if currentStatus[item.Category] < item.Status {
+				currentStatus[item.Category] = item.Status
+			}
+		}
+		for category, status := range currentStatus {
+			if _, exist := lastStatus[category]; !exist {
+				// at first initialze
+				lastStatus[category] = status
+			} else if lastStatus[category] != status {
+				// status changed. invoking trigger.
+				log.Printf("%s status %s -> %s", category, lastStatus[category], status)
+				lastStatus[category] = status
+			}
+		}
+		time.Sleep(1 * time.Second)
 	}
 }
 
@@ -227,6 +268,18 @@ func updateNodeList() {
 		mutex.Unlock()
 		time.Sleep(1 * time.Second)
 	}
+}
+
+func itemInNodes(item *Item) bool {
+	mutex.Lock()
+	defer mutex.Unlock()
+	for _, node := range Nodes {
+		if item.Node == node.Node {
+			item.Address = node.Address
+			return true
+		}
+	}
+	return false
 }
 
 func callConsulAPI(path string) (*http.Response, int64, error) {

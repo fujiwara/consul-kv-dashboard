@@ -22,7 +22,7 @@ var (
 	Version     string
 	ExtAssetDir string
 	Nodes       []Node
-	mutex       sync.Mutex
+	mutex       sync.RWMutex
 )
 
 type KVPair struct {
@@ -271,8 +271,8 @@ func updateNodeList() {
 }
 
 func itemInNodes(item *Item) bool {
-	mutex.Lock()
-	defer mutex.Unlock()
+	mutex.RLock()
+	defer mutex.RUnlock()
 	for _, node := range Nodes {
 		if item.Node == node.Node {
 			item.Address = node.Address

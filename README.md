@@ -15,6 +15,7 @@ Usase of ./consul-kv-dashboard:
   -asset="": Serve files located in /assets from local directory. If not specified, use built-in asset.
   -namespace="dashboard": Consul kv top level key name. (/v1/kv/{namespace}/...)
   -port=3000: http listen port
+  -trigger="": trigger command
   -v=false: show vesion
   -version=false: show vesion
 ```
@@ -45,6 +46,20 @@ $ curl -X PUT -d "content" localhost:8500/v1/kv/dashboard/example/myhost?flags=1
     * 1 : Warning
     * 2 : Danger
     * 3 : Info
+
+## Trigger
+
+```
+$ consul-kv-dashboard -trigger /path/to/command
+```
+
+Invoke trigger command when dashboard item's status was changed.
+
+Pass a changed item (encoded as json) to command's stdin.
+
+```json
+{"category":"testing","node":"web01","address":"192.168.1.10","timestamp":"2015-01-21 11:22:33 +0900","status":"danger","key":"","data":"failure!!"}
+```
 
 ## LICENSE
 

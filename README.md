@@ -1,6 +1,6 @@
 # consul-kv-dashboard
 
-A realtime dashboard web console based on Consul's key value store.
+A dashboard web console based on Consul's key value store.
 
 ![screenshot](docs/consul-kv-dashboard.png)
 

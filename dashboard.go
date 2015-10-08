@@ -175,7 +175,7 @@ func indexPage(w http.ResponseWriter, r *http.Request) {
 
 func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
-	path := strings.TrimLeft(r.URL.Path, "/api")
+	path := strings.TrimPrefix(r.URL.Path, "/api/")
 	resp, _, err := callConsulAPI(
 		"/v1/kv/" + Namespace + "/" + path + "?" + r.URL.RawQuery,
 	)

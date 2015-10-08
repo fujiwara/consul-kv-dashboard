@@ -6,16 +6,11 @@ import "fmt"
 
 const _Status_name = "SuccessWarningDangerInfo"
 
-var _Status_index = [...]uint8{7, 14, 20, 24}
+var _Status_index = [...]uint8{0, 7, 14, 20, 24}
 
 func (i Status) String() string {
-	if i < 0 || i >= Status(len(_Status_index)) {
+	if i < 0 || i >= Status(len(_Status_index)-1) {
 		return fmt.Sprintf("Status(%d)", i)
 	}
-	hi := _Status_index[i]
-	lo := uint8(0)
-	if i > 0 {
-		lo = _Status_index[i-1]
-	}
-	return _Status_name[lo:hi]
+	return _Status_name[_Status_index[i]:_Status_index[i+1]]
 }

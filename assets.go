@@ -49,5 +49,5 @@ func (f *AssetFile) Readdir(count int) ([]os.FileInfo, error) {
 }
 
 func (f *AssetFile) Stat() (os.FileInfo, error) {
-	return f, nil
+	return f.FileInfo, nil
 }

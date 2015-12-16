@@ -46,7 +46,7 @@ const (
 )
 
 func (s Status) MarshalText() ([]byte, error) {
-	if s <= Danger {
+	if s <= Info {
 		return []byte(strings.ToLower(s.String())), nil
 	} else {
 		return []byte(strconv.FormatInt(int64(s), 10)), nil

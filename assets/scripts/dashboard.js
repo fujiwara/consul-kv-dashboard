@@ -14,7 +14,7 @@ var StatusSelector = React.createClass({
                 <button type="button" value="" className="btn btn-default navbar-btn" onClick={this.handleChange}>Any</button>
                 <button type="button" value="success" className="btn btn-default navbar-btn alert-success" onClick={this.handleChange}>Success</button>
                 <button type="button" value="warning" className="btn btn-default navbar-btn alert-warning" onClick={this.handleChange}>Warning</button>
-                <button type="button" value="danger" className="btn btn-default navbar-btn alert-danger" onClick={this.handleChange}>Dagner</button>
+                <button type="button" value="danger" className="btn btn-default navbar-btn alert-danger" onClick={this.handleChange}>Danger</button>
                 <button type="button" value="info" className="btn btn-default navbar-btn alert-info" onClick={this.handleChange}>Info</button>
                 <input type="text" id="nodeFilter" className="form-control" placeholder="nodename"  onKeyUp={this.handleGrep}/>
               </form>

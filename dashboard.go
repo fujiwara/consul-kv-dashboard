@@ -19,13 +19,12 @@ import (
 )
 
 var (
-	Namespace           = "dashboard"
-	ConsulAddr          = "127.0.0.1:8500"
-	PreviousCategoryKey = map[string]string{}
-	Version             string
-	ExtAssetDir         string
-	Nodes               []Node
-	mutex               sync.RWMutex
+	Namespace   = "dashboard"
+	ConsulAddr  = "127.0.0.1:8500"
+	Version     string
+	ExtAssetDir string
+	Nodes       []Node
+	mutex       sync.RWMutex
 )
 
 type KVPair struct {
@@ -235,27 +234,25 @@ func watchForTrigger(command string) {
 		currentItem := make(map[string]Item)
 		for _, kv := range kvps {
 			item := kv.NewItem()
+			lsk := item.lastStatusKey()
 			if !itemInNodes(&item) {
 				continue
 			}
-			if _, exist := currentItem[item.Category]; !exist {
-				currentItem[item.Category] = item
-			} else if currentItem[item.Category].Status < item.Status {
-				currentItem[item.Category] = item
-			} else if PreviousCategoryKey[item.Category] == item.Key {
-				currentItem[item.Category] = item
+			if _, exist := currentItem[lsk]; !exist {
+				currentItem[lsk] = item
+			} else if currentItem[lsk].Status != item.Status {
+				currentItem[lsk] = item
 			}
 		}
-		for category, item := range currentItem {
-			if _, exist := lastStatus[category]; !exist {
+		for lsk, item := range currentItem {
+			if _, exist := lastStatus[lsk]; !exist {
 				// at first initialze
-				lastStatus[category] = item.Status
-				log.Printf("[info] %s: status %s", category, item.Status)
-			} else if lastStatus[category] != item.Status {
+				lastStatus[lsk] = item.Status
+				log.Printf("[info] %s: status %s", lsk, item.Status)
+			} else if lastStatus[lsk] != item.Status {
 				// status changed. invoking trigger.
-				log.Printf("[info] %s: status %s -> %s", category, lastStatus[category], item.Status)
-				lastStatus[category] = item.Status
-				PreviousCategoryKey[category] = item.Key
+				log.Printf("[info] %s: status %s -> %s", lsk, lastStatus[lsk], item.Status)
+				lastStatus[lsk] = item.Status
 				b, _ := json.Marshal(item)
 				err := invokePipe(command, bytes.NewReader(b))
 				if err != nil {
@@ -265,6 +262,10 @@ func watchForTrigger(command string) {
 		}
 		time.Sleep(1 * time.Second)
 	}
+}
+
+func (item Item) lastStatusKey() string {
+	return fmt.Sprintf("%s/%s", item.Category, item.Key)
 }
 
 func invokePipe(command string, src io.Reader) error {

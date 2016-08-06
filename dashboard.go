@@ -19,12 +19,13 @@ import (
 )
 
 var (
-	Namespace   = "dashboard"
-	ConsulAddr  = "127.0.0.1:8500"
-	Version     string
-	ExtAssetDir string
-	Nodes       []Node
-	mutex       sync.RWMutex
+	Namespace           = "dashboard"
+	ConsulAddr          = "127.0.0.1:8500"
+	PreviousCategoryKey = map[string]string{}
+	Version             string
+	ExtAssetDir         string
+	Nodes               []Node
+	mutex               sync.RWMutex
 )
 
 type KVPair struct {
@@ -241,6 +242,8 @@ func watchForTrigger(command string) {
 				currentItem[item.Category] = item
 			} else if currentItem[item.Category].Status < item.Status {
 				currentItem[item.Category] = item
+			} else if PreviousCategoryKey[item.Category] == item.Key {
+				currentItem[item.Category] = item
 			}
 		}
 		for category, item := range currentItem {
@@ -252,6 +255,7 @@ func watchForTrigger(command string) {
 				// status changed. invoking trigger.
 				log.Printf("[info] %s: status %s -> %s", category, lastStatus[category], item.Status)
 				lastStatus[category] = item.Status
+				PreviousCategoryKey[category] = item.Key
 				b, _ := json.Marshal(item)
 				err := invokePipe(command, bytes.NewReader(b))
 				if err != nil {

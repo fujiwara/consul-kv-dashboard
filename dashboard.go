@@ -216,6 +216,7 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 func watchForTrigger(command string) {
 	var index int64
 	lastStatus := make(map[string]Status)
+	lastKeys := make(map[string]string)
 	for {
 		resp, newIndex, err := callConsulAPI(
 			"/v1/kv/" + Namespace + "/?recurse&wait=55s&index=" + strconv.FormatInt(index, 10),
@@ -234,38 +235,39 @@ func watchForTrigger(command string) {
 		currentItem := make(map[string]Item)
 		for _, kv := range kvps {
 			item := kv.NewItem()
-			lsk := item.lastStatusKey()
 			if !itemInNodes(&item) {
 				continue
 			}
-			if _, exist := currentItem[lsk]; !exist {
-				currentItem[lsk] = item
-			} else if currentItem[lsk].Status != item.Status {
-				currentItem[lsk] = item
+			if _, exist := currentItem[item.Category]; !exist {
+				currentItem[item.Category] = item
+			} else if currentItem[item.Category].Status < item.Status {
+				currentItem[item.Category] = item
+			} else if lastKeys[item.Category] == item.Key && lastStatus[item.Category] != item.Status {
+				currentItem[item.Category] = item
 			}
 		}
-		for lsk, item := range currentItem {
-			if _, exist := lastStatus[lsk]; !exist {
+		for category, item := range currentItem {
+			if _, exist := lastStatus[category]; !exist {
 				// at first initialze
-				lastStatus[lsk] = item.Status
-				log.Printf("[info] %s: status %s", lsk, item.Status)
-			} else if lastStatus[lsk] != item.Status {
+				lastStatus[category] = item.Status
+				lastKeys[category] = item.Key
+				log.Printf("[info] %s: status %s", category, item.Status)
+			} else if lastStatus[category] != item.Status {
 				// status changed. invoking trigger.
-				log.Printf("[info] %s: status %s -> %s", lsk, lastStatus[lsk], item.Status)
-				lastStatus[lsk] = item.Status
+				log.Printf("[info] %s/%s: status %s -> %s", category, lastKeys[category], lastStatus[category], item.Status)
+				lastStatus[category] = item.Status
+				lastKeys[category] = item.Key
 				b, _ := json.Marshal(item)
 				err := invokePipe(command, bytes.NewReader(b))
 				if err != nil {
 					log.Println("[error]", err)
 				}
+			} else if lastKeys[category] != item.Key {
+				lastKeys[category] = item.Key
 			}
 		}
 		time.Sleep(1 * time.Second)
 	}
-}
-
-func (item Item) lastStatusKey() string {
-	return fmt.Sprintf("%s/%s", item.Category, item.Key)
 }
 
 func invokePipe(command string, src io.Reader) error {

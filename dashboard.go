@@ -216,6 +216,7 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 func watchForTrigger(command string) {
 	var index int64
 	lastStatus := make(map[string]Status)
+	prevItem := make(map[Item]Status)
 	for {
 		resp, newIndex, err := callConsulAPI(
 			"/v1/kv/" + Namespace + "/?recurse&wait=55s&index=" + strconv.FormatInt(index, 10),
@@ -231,7 +232,20 @@ func watchForTrigger(command string) {
 		dec := json.NewDecoder(resp.Body)
 		dec.Decode(&kvps)
 
+		// find each current item of category
 		currentItem := make(map[string]Item)
+		for _, kv := range kvps {
+			item := kv.NewItem()
+			if !itemInNodes(&item) {
+				continue
+			}
+
+			current := compactItem(item)
+			_, exist := prevItem[current]
+			if exist && prevItem[current] != item.Status {
+				currentItem[item.Category] = item
+			}
+		}
 		for _, kv := range kvps {
 			item := kv.NewItem()
 			if !itemInNodes(&item) {
@@ -243,9 +257,11 @@ func watchForTrigger(command string) {
 				currentItem[item.Category] = item
 			}
 		}
+
+		// invoke trigger when a category status was changed
 		for category, item := range currentItem {
 			if _, exist := lastStatus[category]; !exist {
-				// at first initialze
+				// at first initialize
 				lastStatus[category] = item.Status
 				log.Printf("[info] %s: status %s", category, item.Status)
 			} else if lastStatus[category] != item.Status {
@@ -259,7 +275,24 @@ func watchForTrigger(command string) {
 				}
 			}
 		}
+
+		// update previous item status
+		for _, kv := range kvps {
+			item := kv.NewItem()
+			prev := compactItem(item)
+			prevItem[prev] = item.Status
+		}
+
 		time.Sleep(1 * time.Second)
+	}
+}
+
+// compactItem builds `Item` struct that has only `Category`, `Key`, and `Node` fields.
+func compactItem(item Item) Item {
+	return Item{
+		Key:      item.Key,
+		Category: item.Category,
+		Node:     item.Node,
 	}
 }
 

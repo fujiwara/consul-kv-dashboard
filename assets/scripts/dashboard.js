@@ -2,8 +2,11 @@ var StatusSelector = React.createClass({
   handleChange: function(event) {
     this.props.updateStatusFilter(event.target.value)
   },
-  handleGrep: function(event) {
+  handleNodeGrep: function(event) {
     this.props.updateNodeFilter(event.target.value)
+  },
+  handleKeyGrep: function(event) {
+    this.props.updateKeyFilter(event.target.value)
   },
   render: function() {
     return (
@@ -16,7 +19,8 @@ var StatusSelector = React.createClass({
                 <button type="button" value="warning" className="btn btn-default navbar-btn alert-warning" onClick={this.handleChange}>Warning</button>
                 <button type="button" value="danger" className="btn btn-default navbar-btn alert-danger" onClick={this.handleChange}>Danger</button>
                 <button type="button" value="info" className="btn btn-default navbar-btn alert-info" onClick={this.handleChange}>Info</button>
-                <input type="text" id="nodeFilter" className="form-control" placeholder="nodename"  onKeyUp={this.handleGrep}/>
+                <input type="text" id="nodeFilter" className="form-control" placeholder="nodename"  onKeyUp={this.handleNodeGrep}/>
+                <input type="text" id="keyFilter" className="form-control" placeholder="key"  onKeyUp={this.handleKeyGrep}/>
               </form>
             </div>
           </nav>
@@ -166,6 +170,7 @@ var Dashboard = React.createClass({
       timer: undefined,
       statusFilter: "",
       nodeFilter: "",
+      keyFilter: "",
       currentCategory: cat
     };
   },
@@ -179,11 +184,15 @@ var Dashboard = React.createClass({
   updateNodeFilter: function(filter) {
     this.setState({ nodeFilter: filter });
   },
+  updateKeyFilter: function(filter) {
+    this.setState({ keyFilter: filter });
+  },
   render: function() {
     var statusFilter = this.state.statusFilter;
     var nodeFilter = this.state.nodeFilter;
+    var keyFilter = this.state.keyFilter;
     var items = this.state.items.map(function(item, index) {
-      if ((statusFilter == "" || item.status == statusFilter) && (nodeFilter == "" || item.node.indexOf(nodeFilter) != -1 )) {
+      if ((statusFilter == "" || item.status == statusFilter) && (nodeFilter == "" || item.node.indexOf(nodeFilter) != -1 ) && (keyFilter == "" || item.key.indexOf(keyFilter) != -1 )) {
         return (
           <Item key={index} item={item} />
         );
@@ -195,7 +204,7 @@ var Dashboard = React.createClass({
       <div>
         <h1>Dashboard <Title category={this.state.currentCategory} /></h1>
         <Categories data={this.state.categories} currentCategory={this.state.currentCategory} />
-        <StatusSelector status={this.state.statusFilter} updateStatusFilter={this.updateStatusFilter} updateNodeFilter={this.updateNodeFilter}/>
+        <StatusSelector status={this.state.statusFilter} updateStatusFilter={this.updateStatusFilter} updateNodeFilter={this.updateNodeFilter} updateKeyFilter={this.updateKeyFilter} />
         <table className="table table-bordered">
           <thead>
             <tr>

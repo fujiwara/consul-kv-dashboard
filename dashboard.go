@@ -24,6 +24,7 @@ var (
 	Version     string
 	ExtAssetDir string
 	Nodes       []Node
+	Services    map[string][]string
 	mutex       sync.RWMutex
 )
 
@@ -126,7 +127,8 @@ func main() {
 		log.Println("trigger:", trigger)
 		go watchForTrigger(trigger)
 	}
-	go updateNodeList()
+	go updateNodes()
+	go updateServices()
 
 	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(port), nil))
 }
@@ -205,7 +207,7 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 		items := make([]Item, 0, len(kvps))
 		for _, kv := range kvps {
 			item := kv.NewItem()
-			if itemInNodes(&item) {
+			if itemInCatalog(&item) {
 				items = append(items, item)
 			}
 		}
@@ -236,7 +238,7 @@ func watchForTrigger(command string) {
 		currentItem := make(map[string]Item)
 		for _, kv := range kvps {
 			item := kv.NewItem()
-			if !itemInNodes(&item) {
+			if !itemInCatalog(&item) {
 				continue
 			}
 
@@ -248,7 +250,7 @@ func watchForTrigger(command string) {
 		}
 		for _, kv := range kvps {
 			item := kv.NewItem()
-			if !itemInNodes(&item) {
+			if !itemInCatalog(&item) {
 				continue
 			}
 			if _, exist := currentItem[item.Category]; !exist {
@@ -336,7 +338,7 @@ func invokePipe(command string, src io.Reader) error {
 	return cmdErr
 }
 
-func updateNodeList() {
+func updateNodes() {
 	var index int64
 	for {
 		resp, newIndex, err := callConsulAPI(
@@ -358,13 +360,46 @@ func updateNodeList() {
 	}
 }
 
-func itemInNodes(item *Item) bool {
+func updateServices() {
+	var index int64
+	for {
+		resp, newIndex, err := callConsulAPI(
+			"/v1/catalog/services?index=" + strconv.FormatInt(index, 10) + "&wait=55s",
+		)
+		if err != nil {
+			log.Println("[error]", err)
+			time.Sleep(10 * time.Second)
+			continue
+		}
+		index = newIndex
+		defer resp.Body.Close()
+		dec := json.NewDecoder(resp.Body)
+		mutex.Lock()
+		dec.Decode(&Services)
+		mutex.Unlock()
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func itemInCatalog(item *Item) bool {
 	mutex.RLock()
 	defer mutex.RUnlock()
 	for _, node := range Nodes {
 		if item.Node == node.Node {
 			item.Address = node.Address
 			return true
+		}
+	}
+	for name, tags := range Services {
+		if item.Node == name {
+			item.Address = "service"
+			return true
+		}
+		for _, tag := range tags {
+			if item.Node == fmt.Sprintf("%s.%s", tag, name) {
+				item.Address = "service"
+				return true
+			}
 		}
 	}
 	return false

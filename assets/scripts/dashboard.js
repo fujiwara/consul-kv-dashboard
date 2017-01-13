@@ -19,7 +19,7 @@ var StatusSelector = React.createClass({
                 <button type="button" value="warning" className="btn btn-default navbar-btn alert-warning" onClick={this.handleChange}>Warning</button>
                 <button type="button" value="danger" className="btn btn-default navbar-btn alert-danger" onClick={this.handleChange}>Danger</button>
                 <button type="button" value="info" className="btn btn-default navbar-btn alert-info" onClick={this.handleChange}>Info</button>
-                <input type="text" id="nodeFilter" className="form-control" placeholder="nodename"  onKeyUp={this.handleNodeGrep}/>
+                <input type="text" id="nodeFilter" className="form-control" placeholder="node | service"  onKeyUp={this.handleNodeGrep}/>
                 <input type="text" id="keyFilter" className="form-control" placeholder="key"  onKeyUp={this.handleKeyGrep}/>
               </form>
             </div>
@@ -208,7 +208,7 @@ var Dashboard = React.createClass({
         <table className="table table-bordered">
           <thead>
             <tr>
-              <th>node</th>
+              <th>node | service</th>
               <th>address</th>
               <th>key</th>
               <th className="item_timestamp_col">timestamp</th>

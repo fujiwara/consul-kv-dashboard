@@ -229,10 +229,10 @@ func watchForTrigger(command string) {
 			continue
 		}
 		index = newIndex
-		defer resp.Body.Close()
 		var kvps []*KVPair
 		dec := json.NewDecoder(resp.Body)
 		dec.Decode(&kvps)
+		resp.Body.Close()
 
 		// find each current item of category
 		currentItem := make(map[string]Item)
@@ -350,13 +350,13 @@ func updateNodes() {
 			continue
 		}
 		index = newIndex
-		defer resp.Body.Close()
 		dec := json.NewDecoder(resp.Body)
 		mutex.Lock()
 		dec.Decode(&Nodes)
 		log.Println("[info]", Nodes)
 		mutex.Unlock()
 		time.Sleep(1 * time.Second)
+		resp.Body.Close()
 	}
 }
 
@@ -372,12 +372,12 @@ func updateServices() {
 			continue
 		}
 		index = newIndex
-		defer resp.Body.Close()
 		dec := json.NewDecoder(resp.Body)
 		mutex.Lock()
 		dec.Decode(&Services)
 		mutex.Unlock()
 		time.Sleep(1 * time.Second)
+		resp.Body.Close()
 	}
 }
 

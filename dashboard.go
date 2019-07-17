@@ -1,26 +1,26 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
 )
 
 var (
 	Namespace   = "dashboard"
-	ConsulAddr  = "127.0.0.1:8500"
+	svc         = dynamodb.New(session.New())
 	Version     string
 	ExtAssetDir string
 	Nodes       []Node
@@ -28,13 +28,13 @@ var (
 	mutex       sync.RWMutex
 )
 
-type KVPair struct {
-	Key         string
-	CreateIndex int64
-	ModifyIndex int64
-	LockIndex   int64
-	Flags       int64
-	Value       []byte
+type DynamoDBItem struct {
+	Category  string
+	NodeKey   string
+	Address   string
+	Timestamp string
+	Status    Status
+	Data      string
 }
 
 type Status int64
@@ -64,28 +64,26 @@ type Item struct {
 	Data      string `json:"data"`
 }
 
-func (kv *KVPair) NewItem() Item {
-	item := Item{
-		Data:      string(kv.Value),
-		Timestamp: time.Unix(kv.Flags/1000, 0).Format("2006-01-02 15:04:05 -0700"),
-	}
-	item.Status = Status(kv.Flags % 1000)
-
-	// kv.Key : {namespace}/{category}/{node}/{key}
-	path := strings.Split(kv.Key, "/")
-	item.Category = path[1]
-	if len(path) >= 3 {
-		item.Node = path[2]
-	}
-	if len(path) >= 4 {
-		item.Key = path[3]
-	}
-	return item
-}
-
 type Node struct {
 	Node    string
 	Address string
+}
+
+func (dbItem *DynamoDBItem) NewItem() Item {
+	item := Item{
+		Category:  dbItem.Category,
+		Address:   dbItem.Address,
+		Timestamp: dbItem.Timestamp,
+		Status:    dbItem.Status,
+		Data:      dbItem.Data,
+	}
+	nodeKey := strings.Split(dbItem.NodeKey, "/")
+	item.Node = nodeKey[0]
+	if len(nodeKey) >= 2 {
+		item.Key = nodeKey[1]
+	}
+	return item
+
 }
 
 func main() {
@@ -123,12 +121,14 @@ func main() {
 	log.Println("listen port:", port)
 	log.Println("asset directory:", ExtAssetDir)
 	log.Println("namespace:", Namespace)
-	if trigger != "" {
-		log.Println("trigger:", trigger)
-		go watchForTrigger(trigger)
-	}
-	go updateNodes()
-	go updateServices()
+	/*
+		if trigger != "" {
+			log.Println("trigger:", trigger)
+			go watchForTrigger(trigger)
+		}
+	*/
+	// go updateNodes()
+	// go updateServices()
 
 	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(port), nil))
 }
@@ -153,68 +153,130 @@ func indexPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func kvApiProxy(w http.ResponseWriter, r *http.Request) {
+	log.Println("kvApiProxy")
 	r.ParseForm()
-	path := strings.TrimPrefix(r.URL.Path, "/api/")
-	resp, _, err := callConsulAPI(
-		"/v1/kv/" + Namespace + "/" + path + "?" + r.URL.RawQuery,
-	)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("%s", err), http.StatusInternalServerError)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		w.Header().Set("Content-Type", "application/json")
-		http.Error(w, "[]", resp.StatusCode)
-		return
-	}
-	if resp.StatusCode != http.StatusOK {
-		http.Error(w, "", resp.StatusCode)
-		io.Copy(w, resp.Body)
-		return
-	}
-	// copy response header to client
-	for name, value := range resp.Header {
-		if strings.HasPrefix(name, "X-") || name == "Content-Type" {
-			for _, v := range value {
-				w.Header().Set(name, v)
-			}
-		}
-	}
 
-	// keys or values
-	dec := json.NewDecoder(resp.Body)
 	enc := json.NewEncoder(w)
 	if _, t := r.Form["keys"]; t {
-		var keys []string
-		uniqKeyMap := make(map[string]bool)
-		dec.Decode(&keys)
-		for _, key := range keys {
-			path := strings.Split(key, "/")
-			if len(path) >= 2 {
-				uniqKeyMap[path[1]] = true
-			}
-		}
-		uniqKeys := make([]string, 0, len(uniqKeyMap))
-		for key, _ := range uniqKeyMap {
-			uniqKeys = append(uniqKeys, key)
-		}
-		sort.Strings(uniqKeys)
+		// TODO:
+		uniqKeys := []string{"foo"}
+		log.Println("keys:", uniqKeys)
 		enc.Encode(uniqKeys)
 	} else {
-		var kvps []*KVPair
-		dec.Decode(&kvps)
-		items := make([]Item, 0, len(kvps))
-		for _, kv := range kvps {
-			item := kv.NewItem()
-			if itemInCatalog(&item) {
-				items = append(items, item)
-			}
+		category := strings.TrimPrefix(r.URL.Path, "/api/")
+		dbItems, err := getDynamoDBItems(category)
+		if err != nil {
+			log.Println(err)
+		}
+		items := make([]Item, 0, len(dbItems))
+		for _, dbItem := range dbItems {
+			item := dbItem.NewItem()
+			// TODO
+			//if itemInCatalog(&item) {
+			items = append(items, item)
+			//}
 		}
 		enc.Encode(items)
 	}
 }
 
+func getDynamoDBItems(category string) ([]*DynamoDBItem, error) {
+	//aws dynamodb api request
+	input := &dynamodb.QueryInput{
+		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+			":categoryName": {
+				S: aws.String(category),
+			},
+		},
+		KeyConditionExpression: aws.String("category = :categoryName"),
+		TableName:              aws.String(Namespace),
+	}
+
+	result, err := svc.Query(input)
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case dynamodb.ErrCodeProvisionedThroughputExceededException:
+				fmt.Println(dynamodb.ErrCodeProvisionedThroughputExceededException, aerr.Error())
+			case dynamodb.ErrCodeResourceNotFoundException:
+				fmt.Println(dynamodb.ErrCodeResourceNotFoundException, aerr.Error())
+			case dynamodb.ErrCodeRequestLimitExceeded:
+				fmt.Println(dynamodb.ErrCodeRequestLimitExceeded, aerr.Error())
+			case dynamodb.ErrCodeInternalServerError:
+				fmt.Println(dynamodb.ErrCodeInternalServerError, aerr.Error())
+			default:
+				fmt.Println(aerr.Error())
+			}
+		} else {
+			// Print the error, cast err to awserr.Error to get the Code and
+			// Message from an error.
+			fmt.Println(err.Error())
+		}
+		return nil, err
+	}
+
+	var dbItems []*DynamoDBItem
+	for _, dbItemMap := range (*result).Items {
+		dbItem := DynamoDBItem{
+			Category: *dbItemMap["category"].S,
+			NodeKey:  *dbItemMap["node_key"].S,
+		}
+		if dbItemMap["address"] != nil {
+			dbItem.Address = *dbItemMap["address"].S
+		}
+		if dbItemMap["data"] != nil {
+			dbItem.Data = *dbItemMap["data"].S
+		}
+		if dbItemMap["timestamp"] != nil {
+			dbItem.Timestamp = *dbItemMap["timestamp"].S
+		}
+		if dbItemMap["status"] != nil {
+			i, _ := strconv.Atoi(*dbItemMap["status"].N)
+			dbItem.Status = (Status)(i)
+		}
+		dbItems = append(dbItems, &dbItem)
+	}
+	return dbItems, nil
+
+}
+
+/*
+func updateDynamoDBCategories() {
+	input := &dynamodb.ScanInput{
+		ProjectionExpression: aws.String("category"),
+		TableName:            aws.String(Namespace),
+	}
+
+	result, err := svc.Scan(input)
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case dynamodb.ErrCodeProvisionedThroughputExceededException:
+				fmt.Println(dynamodb.ErrCodeProvisionedThroughputExceededException, aerr.Error())
+			case dynamodb.ErrCodeResourceNotFoundException:
+				fmt.Println(dynamodb.ErrCodeResourceNotFoundException, aerr.Error())
+			case dynamodb.ErrCodeRequestLimitExceeded:
+				fmt.Println(dynamodb.ErrCodeRequestLimitExceeded, aerr.Error())
+			case dynamodb.ErrCodeInternalServerError:
+				fmt.Println(dynamodb.ErrCodeInternalServerError, aerr.Error())
+			default:
+				fmt.Println(aerr.Error())
+			}
+		} else {
+			// Print the error, cast err to awserr.Error to get the Code and
+			// Message from an error.
+			fmt.Println(err.Error())
+		}
+		return
+	}
+
+	fmt.Println(reflect.ValueOf(result).Type())
+
+}
+
+*/
+
+/*
 func watchForTrigger(command string) {
 	var index int64
 	lastStatus := make(map[string]Status)
@@ -404,19 +466,4 @@ func itemInCatalog(item *Item) bool {
 	}
 	return false
 }
-
-func callConsulAPI(path string) (*http.Response, int64, error) {
-	var index int64
-	_url := "http://" + ConsulAddr + path
-	log.Println("[info] get", _url)
-	resp, err := http.Get(_url)
-	if err != nil {
-		log.Println("[error]", err)
-		return nil, index, err
-	}
-	_indexes := resp.Header["X-Consul-Index"]
-	if len(_indexes) > 0 {
-		index, _ = strconv.ParseInt(_indexes[0], 10, 64)
-	}
-	return resp, index, nil
-}
+*/

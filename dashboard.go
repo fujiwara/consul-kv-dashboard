@@ -19,13 +19,13 @@ import (
 )
 
 var (
-	Namespace   = "dashboard"
-	svc         = dynamodb.New(session.New())
-	Version     string
-	ExtAssetDir string
-	Nodes       []Node
-	Services    map[string][]string
-	mutex       sync.RWMutex
+	Namespace    = "dashboard"
+	DBConnection = dynamodb.New(session.New())
+	Version      string
+	ExtAssetDir  string
+	Nodes        []Node
+	Services     map[string][]string
+	mutex        sync.RWMutex
 )
 
 type DynamoDBItem struct {
@@ -191,7 +191,7 @@ func getDynamoDBItems(category string) ([]*DynamoDBItem, error) {
 		TableName:              aws.String(Namespace),
 	}
 
-	result, err := svc.Query(input)
+	result, err := DBConnection.Query(input)
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok {
 			switch aerr.Code() {
@@ -245,7 +245,7 @@ func getDynamoDBCategories() ([]string, error) {
 		TableName:            aws.String(Namespace),
 	}
 
-	result, err := svc.Scan(input)
+	result, err := DBConnection.Scan(input)
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok {
 			switch aerr.Code() {

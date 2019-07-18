@@ -280,7 +280,6 @@ func getDynamoDBCategories() ([]string, error) {
 		}
 	}
 
-	fmt.Println(categories)
 	return categories, nil
 }
 

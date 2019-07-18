@@ -193,24 +193,7 @@ func getDynamoDBItems(category string) ([]*DynamoDBItem, error) {
 
 	result, err := DBConnection.Query(input)
 	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok {
-			switch aerr.Code() {
-			case dynamodb.ErrCodeProvisionedThroughputExceededException:
-				log.Println(dynamodb.ErrCodeProvisionedThroughputExceededException, aerr.Error())
-			case dynamodb.ErrCodeResourceNotFoundException:
-				log.Println(dynamodb.ErrCodeResourceNotFoundException, aerr.Error())
-			case dynamodb.ErrCodeRequestLimitExceeded:
-				log.Println(dynamodb.ErrCodeRequestLimitExceeded, aerr.Error())
-			case dynamodb.ErrCodeInternalServerError:
-				log.Println(dynamodb.ErrCodeInternalServerError, aerr.Error())
-			default:
-				log.Println(aerr.Error())
-			}
-		} else {
-			// Print the error, cast err to awserr.Error to get the Code and
-			// Message from an error.
-			log.Println(err.Error())
-		}
+		DynamoDBConnectionErrorLog(err)
 		return nil, err
 	}
 
@@ -247,24 +230,7 @@ func getDynamoDBCategories() ([]string, error) {
 
 	result, err := DBConnection.Scan(input)
 	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok {
-			switch aerr.Code() {
-			case dynamodb.ErrCodeProvisionedThroughputExceededException:
-				log.Println(dynamodb.ErrCodeProvisionedThroughputExceededException, aerr.Error())
-			case dynamodb.ErrCodeResourceNotFoundException:
-				log.Println(dynamodb.ErrCodeResourceNotFoundException, aerr.Error())
-			case dynamodb.ErrCodeRequestLimitExceeded:
-				log.Println(dynamodb.ErrCodeRequestLimitExceeded, aerr.Error())
-			case dynamodb.ErrCodeInternalServerError:
-				log.Println(dynamodb.ErrCodeInternalServerError, aerr.Error())
-			default:
-				log.Println(aerr.Error())
-			}
-		} else {
-			// Print the error, cast err to awserr.Error to get the Code and
-			// Message from an error.
-			log.Println(err.Error())
-		}
+		DynamoDBConnectionErrorLog(err)
 		return nil, err
 	}
 
@@ -287,6 +253,28 @@ func isInSlice(slice []string, pattern string) bool {
 		}
 	}
 	return false
+}
+
+func DynamoDBConnectionErrorLog(err error) error {
+	if aerr, ok := err.(awserr.Error); ok {
+		switch aerr.Code() {
+		case dynamodb.ErrCodeProvisionedThroughputExceededException:
+			log.Println(dynamodb.ErrCodeProvisionedThroughputExceededException, aerr.Error())
+		case dynamodb.ErrCodeResourceNotFoundException:
+			log.Println(dynamodb.ErrCodeResourceNotFoundException, aerr.Error())
+		case dynamodb.ErrCodeRequestLimitExceeded:
+			log.Println(dynamodb.ErrCodeRequestLimitExceeded, aerr.Error())
+		case dynamodb.ErrCodeInternalServerError:
+			log.Println(dynamodb.ErrCodeInternalServerError, aerr.Error())
+		default:
+			log.Println(aerr.Error())
+		}
+	} else {
+		// Print the error, cast err to awserr.Error to get the Code and
+		// Message from an error.
+		log.Println(err.Error())
+	}
+	return err
 }
 
 /*

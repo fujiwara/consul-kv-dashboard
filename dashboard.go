@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -32,7 +33,7 @@ type DynamoDBItem struct {
 	Category  string
 	NodeKey   string
 	Address   string
-	Timestamp string
+	Timestamp int64
 	Status    Status
 	Data      string
 }
@@ -73,7 +74,7 @@ func (dbItem *DynamoDBItem) NewItem() Item {
 	item := Item{
 		Category:  dbItem.Category,
 		Address:   dbItem.Address,
-		Timestamp: dbItem.Timestamp,
+		Timestamp: time.Unix(dbItem.Timestamp, 0).Format("2006-01-02 15:04:05 -0700"),
 		Status:    dbItem.Status,
 		Data:      dbItem.Data,
 	}
@@ -204,17 +205,28 @@ func getDynamoDBItems(category string) ([]*DynamoDBItem, error) {
 			NodeKey:  *dbItemMap["node_key"].S,
 		}
 		if dbItemMap["address"] != nil {
-			dbItem.Address = *dbItemMap["address"].S
+			if dbItemMap["address"].S != nil {
+				dbItem.Address = *dbItemMap["address"].S
+			}
 		}
 		if dbItemMap["data"] != nil {
-			dbItem.Data = *dbItemMap["data"].S
+			if dbItemMap["data"].S != nil {
+				dbItem.Data = *dbItemMap["data"].S
+			}
 		}
 		if dbItemMap["timestamp"] != nil {
-			dbItem.Timestamp = *dbItemMap["timestamp"].S
+			if dbItemMap["timestamp"].N != nil {
+				//TODO: error処理
+				i, _ := strconv.ParseInt(*dbItemMap["timestamp"].N, 10, 64)
+				dbItem.Timestamp = i
+			}
 		}
 		if dbItemMap["status"] != nil {
-			i, _ := strconv.Atoi(*dbItemMap["status"].N)
-			dbItem.Status = (Status)(i)
+			if dbItemMap["status"].N != nil {
+				//TODO: error処理
+				i, _ := strconv.Atoi(*dbItemMap["status"].N)
+				dbItem.Status = (Status)(i)
+			}
 		}
 		dbItems = append(dbItems, &dbItem)
 	}

@@ -158,10 +158,12 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 
 	enc := json.NewEncoder(w)
 	if _, t := r.Form["keys"]; t {
-		// TODO:
-		uniqKeys := []string{"foo"}
-		log.Println("keys:", uniqKeys)
-		enc.Encode(uniqKeys)
+		categories, err := getDynamoDBCategories()
+		if err != nil {
+			log.Println(err)
+		}
+		log.Println("keys:", categories)
+		enc.Encode(categories)
 	} else {
 		category := strings.TrimPrefix(r.URL.Path, "/api/")
 		dbItems, err := getDynamoDBItems(category)
@@ -240,8 +242,7 @@ func getDynamoDBItems(category string) ([]*DynamoDBItem, error) {
 
 }
 
-/*
-func updateDynamoDBCategories() {
+func getDynamoDBCategories() ([]string, error) {
 	input := &dynamodb.ScanInput{
 		ProjectionExpression: aws.String("category"),
 		TableName:            aws.String(Namespace),
@@ -267,14 +268,30 @@ func updateDynamoDBCategories() {
 			// Message from an error.
 			fmt.Println(err.Error())
 		}
-		return
+		return nil, err
 	}
 
-	fmt.Println(reflect.ValueOf(result).Type())
+	var categories []string
+	for _, dbItem := range (*result).Items {
+		if dbItem["category"] != nil {
+			if !isInSlice(categories, *dbItem["category"].S) {
+				categories = append(categories, *dbItem["category"].S)
+			}
+		}
+	}
 
+	fmt.Println(categories)
+	return categories, nil
 }
 
-*/
+func isInSlice(slice []string, pattern string) bool {
+	for _, i := range slice {
+		if i == pattern {
+			return true
+		}
+	}
+	return false
+}
 
 /*
 func watchForTrigger(command string) {

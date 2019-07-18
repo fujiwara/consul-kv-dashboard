@@ -173,10 +173,7 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 		items := make([]Item, 0, len(dbItems))
 		for _, dbItem := range dbItems {
 			item := dbItem.NewItem()
-			// TODO
-			//if itemInCatalog(&item) {
 			items = append(items, item)
-			//}
 		}
 		enc.Encode(items)
 	}
@@ -414,72 +411,5 @@ func invokePipe(command string, src io.Reader) error {
 
 	cmdErr := <-cmdCh
 	return cmdErr
-}
-
-func updateNodes() {
-	var index int64
-	for {
-		resp, newIndex, err := callConsulAPI(
-			"/v1/catalog/nodes?index=" + strconv.FormatInt(index, 10) + "&wait=55s",
-		)
-		if err != nil {
-			log.Println("[error]", err)
-			time.Sleep(10 * time.Second)
-			continue
-		}
-		index = newIndex
-		dec := json.NewDecoder(resp.Body)
-		mutex.Lock()
-		dec.Decode(&Nodes)
-		log.Println("[info]", Nodes)
-		mutex.Unlock()
-		time.Sleep(1 * time.Second)
-		resp.Body.Close()
-	}
-}
-
-func updateServices() {
-	var index int64
-	for {
-		resp, newIndex, err := callConsulAPI(
-			"/v1/catalog/services?index=" + strconv.FormatInt(index, 10) + "&wait=55s",
-		)
-		if err != nil {
-			log.Println("[error]", err)
-			time.Sleep(10 * time.Second)
-			continue
-		}
-		index = newIndex
-		dec := json.NewDecoder(resp.Body)
-		mutex.Lock()
-		dec.Decode(&Services)
-		mutex.Unlock()
-		time.Sleep(1 * time.Second)
-		resp.Body.Close()
-	}
-}
-
-func itemInCatalog(item *Item) bool {
-	mutex.RLock()
-	defer mutex.RUnlock()
-	for _, node := range Nodes {
-		if item.Node == node.Node {
-			item.Address = node.Address
-			return true
-		}
-	}
-	for name, tags := range Services {
-		if item.Node == name {
-			item.Address = "service"
-			return true
-		}
-		for _, tag := range tags {
-			if item.Node == fmt.Sprintf("%s.%s", tag, name) {
-				item.Address = "service"
-				return true
-			}
-		}
-	}
-	return false
 }
 */

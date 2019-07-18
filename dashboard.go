@@ -256,25 +256,19 @@ func getDynamoDBCategories() ([]string, error) {
 		return nil, err
 	}
 
-	var categories []string
+	categoriesMap := make(map[string]bool)
 	for _, dbItem := range (*result).Items {
-		if dbItem["category"] != nil {
-			if !isInSlice(categories, *dbItem["category"].S) {
-				categories = append(categories, *dbItem["category"].S)
-			}
+		if !categoriesMap[*dbItem["category"].S] {
+			categoriesMap[*dbItem["category"].S] = true
 		}
+	}
+
+	var categories []string
+	for key, _ := range categoriesMap {
+		categories = append(categories, key)
 	}
 
 	return categories, nil
-}
-
-func isInSlice(slice []string, pattern string) bool {
-	for _, i := range slice {
-		if i == pattern {
-			return true
-		}
-	}
-	return false
 }
 
 func DynamoDBConnectionErrorLog(err error) error {

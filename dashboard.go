@@ -216,15 +216,19 @@ func getDynamoDBItems(category string) ([]*DynamoDBItem, error) {
 		}
 		if dbItemMap["timestamp"] != nil {
 			if dbItemMap["timestamp"].N != nil {
-				//TODO: error処理
-				i, _ := strconv.ParseInt(*dbItemMap["timestamp"].N, 10, 64)
+				i, err := strconv.ParseInt(*dbItemMap["timestamp"].N, 10, 64)
+				if err != nil {
+					log.Println(err)
+				}
 				dbItem.Timestamp = i
 			}
 		}
 		if dbItemMap["status"] != nil {
 			if dbItemMap["status"].N != nil {
-				//TODO: error処理
-				i, _ := strconv.Atoi(*dbItemMap["status"].N)
+				i, err := strconv.Atoi(*dbItemMap["status"].N)
+				if err != nil {
+					log.Println(err)
+				}
 				dbItem.Status = (Status)(i)
 			}
 		}

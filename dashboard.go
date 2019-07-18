@@ -10,7 +10,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -24,9 +23,6 @@ var (
 	DBConnection = dynamodb.New(session.New())
 	Version      string
 	ExtAssetDir  string
-	Nodes        []Node
-	Services     map[string][]string
-	mutex        sync.RWMutex
 )
 
 type DynamoDBItem struct {
@@ -49,7 +45,7 @@ const (
 )
 
 func (s Status) MarshalText() ([]byte, error) {
-	if s <= Info {
+	if s <= Unknown {
 		return []byte(strings.ToLower(s.String())), nil
 	} else {
 		return []byte(strconv.FormatInt(int64(s), 10)), nil
@@ -64,11 +60,6 @@ type Item struct {
 	Status    Status `json:"status"`
 	Key       string `json:"key"`
 	Data      string `json:"data"`
-}
-
-type Node struct {
-	Node    string
-	Address string
 }
 
 func (dbItem *DynamoDBItem) NewItem() Item {

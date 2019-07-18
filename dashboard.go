@@ -45,6 +45,7 @@ const (
 	Warning
 	Danger
 	Info
+	Unknown
 )
 
 func (s Status) MarshalText() ([]byte, error) {
@@ -223,13 +224,18 @@ func getDynamoDBItems(category string) ([]*DynamoDBItem, error) {
 				dbItem.Timestamp = i
 			}
 		}
+
+		dbItem.Status = Unknown
 		if dbItemMap["status"] != nil {
 			if dbItemMap["status"].N != nil {
 				i, err := strconv.Atoi(*dbItemMap["status"].N)
 				if err != nil {
 					log.Println(err)
+				} else {
+					if Success <= (Status)(i) && (Status)(i) <= Unknown {
+						dbItem.Status = (Status)(i)
+					}
 				}
-				dbItem.Status = (Status)(i)
 			}
 		}
 		dbItems = append(dbItems, &dbItem)

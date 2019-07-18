@@ -196,20 +196,20 @@ func getDynamoDBItems(category string) ([]*DynamoDBItem, error) {
 		if aerr, ok := err.(awserr.Error); ok {
 			switch aerr.Code() {
 			case dynamodb.ErrCodeProvisionedThroughputExceededException:
-				fmt.Println(dynamodb.ErrCodeProvisionedThroughputExceededException, aerr.Error())
+				log.Println(dynamodb.ErrCodeProvisionedThroughputExceededException, aerr.Error())
 			case dynamodb.ErrCodeResourceNotFoundException:
-				fmt.Println(dynamodb.ErrCodeResourceNotFoundException, aerr.Error())
+				log.Println(dynamodb.ErrCodeResourceNotFoundException, aerr.Error())
 			case dynamodb.ErrCodeRequestLimitExceeded:
-				fmt.Println(dynamodb.ErrCodeRequestLimitExceeded, aerr.Error())
+				log.Println(dynamodb.ErrCodeRequestLimitExceeded, aerr.Error())
 			case dynamodb.ErrCodeInternalServerError:
-				fmt.Println(dynamodb.ErrCodeInternalServerError, aerr.Error())
+				log.Println(dynamodb.ErrCodeInternalServerError, aerr.Error())
 			default:
-				fmt.Println(aerr.Error())
+				log.Println(aerr.Error())
 			}
 		} else {
 			// Print the error, cast err to awserr.Error to get the Code and
 			// Message from an error.
-			fmt.Println(err.Error())
+			log.Println(err.Error())
 		}
 		return nil, err
 	}
@@ -250,20 +250,20 @@ func getDynamoDBCategories() ([]string, error) {
 		if aerr, ok := err.(awserr.Error); ok {
 			switch aerr.Code() {
 			case dynamodb.ErrCodeProvisionedThroughputExceededException:
-				fmt.Println(dynamodb.ErrCodeProvisionedThroughputExceededException, aerr.Error())
+				log.Println(dynamodb.ErrCodeProvisionedThroughputExceededException, aerr.Error())
 			case dynamodb.ErrCodeResourceNotFoundException:
-				fmt.Println(dynamodb.ErrCodeResourceNotFoundException, aerr.Error())
+				log.Println(dynamodb.ErrCodeResourceNotFoundException, aerr.Error())
 			case dynamodb.ErrCodeRequestLimitExceeded:
-				fmt.Println(dynamodb.ErrCodeRequestLimitExceeded, aerr.Error())
+				log.Println(dynamodb.ErrCodeRequestLimitExceeded, aerr.Error())
 			case dynamodb.ErrCodeInternalServerError:
-				fmt.Println(dynamodb.ErrCodeInternalServerError, aerr.Error())
+				log.Println(dynamodb.ErrCodeInternalServerError, aerr.Error())
 			default:
-				fmt.Println(aerr.Error())
+				log.Println(aerr.Error())
 			}
 		} else {
 			// Print the error, cast err to awserr.Error to get the Code and
 			// Message from an error.
-			fmt.Println(err.Error())
+			log.Println(err.Error())
 		}
 		return nil, err
 	}

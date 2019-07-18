@@ -162,6 +162,7 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 		categories, err := getDynamoDBCategories()
 		if err != nil {
 			log.Println(err)
+			http.Error(w, fmt.Sprintf("%s", err), http.StatusInternalServerError)
 		}
 		log.Println("keys:", categories)
 		enc.Encode(categories)
@@ -170,6 +171,7 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 		dbItems, err := getDynamoDBItems(category)
 		if err != nil {
 			log.Println(err)
+			http.Error(w, fmt.Sprintf("%s", err), http.StatusInternalServerError)
 		}
 		items := make([]Item, 0, len(dbItems))
 		for _, dbItem := range dbItems {

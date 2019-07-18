@@ -153,7 +153,6 @@ func indexPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func kvApiProxy(w http.ResponseWriter, r *http.Request) {
-	log.Println("kvApiProxy")
 	r.ParseForm()
 
 	enc := json.NewEncoder(w)
@@ -175,6 +174,7 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 			item := dbItem.NewItem()
 			items = append(items, item)
 		}
+		log.Printf("[%s] item num: %d", category, len(items))
 		enc.Encode(items)
 	}
 }

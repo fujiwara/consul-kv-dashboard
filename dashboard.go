@@ -167,18 +167,24 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 	} else {
 		category := strings.TrimPrefix(r.URL.Path, "/api/")
 		if _, u := r.Form["update"]; u {
-			select {
-			case <-StreamCh:
-				//TODO: continueするとtimeout用のtime.Afterが初期化されて55秒以上待つことになるのでナシ
-				//if res.Category != category {
-				//	continue
-				//}
-				log.Println("[info] data update")
-			case <-time.After(time.Second * 55):
-				log.Println("[info] timeout")
+			timer := time.After(time.Second * 55)
+		L:
+			for {
+				select {
+				case item := <-StreamCh:
+					if item.Category != category {
+						continue
+					}
+					log.Println("[info] data update")
+					break L
+				case <-timer:
+					log.Println("[info] timeout")
+					break L
+				}
 			}
 		}
 
+		log.Println("[info] getDBItems")
 		dbItems, err := getDBItems(category)
 		if err != nil {
 			log.Println(err)

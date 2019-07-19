@@ -16,13 +16,16 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodbstreams"
 )
 
 var (
-	Namespace    = "dashboard"
-	DBConnection = dynamodb.New(session.New())
-	Version      string
-	ExtAssetDir  string
+	Namespace        = "dashboard"
+	DBConnection     = dynamodb.New(session.New())
+	StreamConnection = dynamodbstreams.New(session.New())
+	Version          string
+	ExtAssetDir      string
+	StreamInterval   = time.Second
 )
 
 type DynamoDBItem struct {
@@ -114,6 +117,9 @@ func main() {
 	log.Println("listen port:", port)
 	log.Println("asset directory:", ExtAssetDir)
 	log.Println("namespace:", Namespace)
+
+	go DynamoDBUpdateWatch()
+
 	/*
 		if trigger != "" {
 			log.Println("trigger:", trigger)
@@ -282,6 +288,109 @@ func DynamoDBConnectionErrorLog(err error) error {
 		// Print the error, cast err to awserr.Error to get the Code and
 		// Message from an error.
 		log.Println(err.Error())
+	}
+	return err
+}
+
+func DynamoDBUpdateWatch() {
+	input := &dynamodbstreams.ListStreamsInput{
+		TableName: &Namespace,
+	}
+	result, err := StreamConnection.ListStreams(input)
+	if err != nil {
+		DBStreamConnectionErrorLog(err)
+		return
+	}
+	if result.Streams == nil {
+		log.Println("Stream not found")
+		return
+	}
+	var arnList []*string
+	for _, stream := range result.Streams {
+		if stream.StreamArn != nil {
+			arnList = append(arnList, stream.StreamArn)
+		}
+	}
+	log.Println("[info] Stream ARN num: ", len(arnList))
+	for _, arn := range arnList {
+		go DynamoDBStreamDescribe(*arn)
+	}
+}
+
+func DynamoDBStreamDescribe(arn string) {
+
+	input := &dynamodbstreams.DescribeStreamInput{
+		StreamArn: aws.String(arn),
+	}
+	result, err := StreamConnection.DescribeStream(input)
+	if err != nil {
+		DBStreamConnectionErrorLog(err)
+		return
+	}
+
+	// TODO: nilチェック
+	log.Println("[info]shards: ", len((*result).StreamDescription.Shards))
+	for _, shard := range result.StreamDescription.Shards {
+		go DynamoDBStreamShardReader(arn, *(shard).ShardId)
+	}
+}
+
+func DynamoDBStreamShardReader(arn string, id string) {
+	shardIteratorInput := &dynamodbstreams.GetShardIteratorInput{
+		ShardId:           aws.String(id),
+		ShardIteratorType: aws.String("LATEST"),
+		StreamArn:         aws.String(arn),
+	}
+	shardIterator, err := StreamConnection.GetShardIterator(shardIteratorInput)
+	if err != nil {
+		DBStreamConnectionErrorLog(err)
+		return
+	}
+	// TODO: nilチェック
+	log.Println("[info] ShardIterator: ", *(shardIterator).ShardIterator)
+
+	itr := shardIterator.ShardIterator
+	var record *dynamodbstreams.GetRecordsOutput
+	for {
+		getRecordInput := &dynamodbstreams.GetRecordsInput{
+			ShardIterator: aws.String(*itr),
+		}
+		record, err = StreamConnection.GetRecords(getRecordInput)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		log.Println("[info] GetRecords: ", record)
+		if record.NextShardIterator == nil {
+			log.Println("[info] NextShardIterator not found")
+			return
+		}
+		itr = record.NextShardIterator
+		time.Sleep(StreamInterval)
+	}
+
+}
+
+func DBStreamConnectionErrorLog(err error) error {
+	if aerr, ok := err.(awserr.Error); ok {
+		switch aerr.Code() {
+		case dynamodbstreams.ErrCodeResourceNotFoundException:
+			fmt.Println(dynamodbstreams.ErrCodeResourceNotFoundException, aerr.Error())
+		case dynamodbstreams.ErrCodeLimitExceededException:
+			fmt.Println(dynamodbstreams.ErrCodeLimitExceededException, aerr.Error())
+		case dynamodbstreams.ErrCodeInternalServerError:
+			fmt.Println(dynamodbstreams.ErrCodeInternalServerError, aerr.Error())
+		case dynamodbstreams.ErrCodeExpiredIteratorException:
+			fmt.Println(dynamodbstreams.ErrCodeExpiredIteratorException, aerr.Error())
+		case dynamodbstreams.ErrCodeTrimmedDataAccessException:
+			fmt.Println(dynamodbstreams.ErrCodeTrimmedDataAccessException, aerr.Error())
+		default:
+			fmt.Println(aerr.Error())
+		}
+	} else {
+		// Print the error, cast err to awserr.Error to get the Code and
+		// Message from an error.
+		fmt.Println(err.Error())
 	}
 	return err
 }

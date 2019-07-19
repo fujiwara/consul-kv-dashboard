@@ -137,7 +137,7 @@ var Dashboard = React.createClass({
       url: "/api/" + this.state.currentCategory + "?recurse&wait=55s&index=" + this.state.index || 0,
       dataType: 'json',
       success: function(data, textStatus, request) {
-          var timer = setTimeout(this.loadDashboardFromServer, 10000)//this.props.pollWait);
+        var timer = setTimeout(this.loadDashboardFromServer, this.props.pollWait);
         var index = request.getResponseHeader('X-Consul-Index')
         this.setState({
           items: data,

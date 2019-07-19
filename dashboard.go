@@ -26,6 +26,7 @@ var (
 	Version          string
 	ExtAssetDir      string
 	StreamInterval   = time.Second
+	ch               = make(chan Item, 1)
 )
 
 type DynamoDBItem struct {
@@ -118,7 +119,8 @@ func main() {
 	log.Println("asset directory:", ExtAssetDir)
 	log.Println("namespace:", Namespace)
 
-	go DynamoDBUpdateWatch()
+	// wait DB update
+	go DynamoDBUpdateWatch(ch)
 
 	/*
 		if trigger != "" {
@@ -153,8 +155,8 @@ func indexPage(w http.ResponseWriter, r *http.Request) {
 
 func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
-
 	enc := json.NewEncoder(w)
+
 	if _, t := r.Form["keys"]; t {
 		categories, err := getDynamoDBCategories()
 		if err != nil {
@@ -165,6 +167,18 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 		enc.Encode(categories)
 	} else {
 		category := strings.TrimPrefix(r.URL.Path, "/api/")
+
+		select {
+		case <-ch:
+			//TODO: continueするとtimeout用のtime.Afterが初期化されて55秒以上待つことになるのでナシ
+			//if res.Category != category {
+			//	continue
+			//}
+			log.Println("[info] data update")
+		case <-time.After(time.Second * 55):
+			log.Println("[info] timeout")
+		}
+
 		dbItems, err := getDynamoDBItems(category)
 		if err != nil {
 			log.Println(err)
@@ -292,7 +306,7 @@ func DynamoDBConnectionErrorLog(err error) error {
 	return err
 }
 
-func DynamoDBUpdateWatch() {
+func DynamoDBUpdateWatch(ch chan Item) {
 	input := &dynamodbstreams.ListStreamsInput{
 		TableName: &Namespace,
 	}
@@ -313,11 +327,11 @@ func DynamoDBUpdateWatch() {
 	}
 	log.Println("[info] Stream ARN num: ", len(arnList))
 	for _, arn := range arnList {
-		go DynamoDBStreamDescribe(*arn)
+		go DynamoDBStreamDescribe(*arn, ch)
 	}
 }
 
-func DynamoDBStreamDescribe(arn string) {
+func DynamoDBStreamDescribe(arn string, ch chan Item) {
 
 	input := &dynamodbstreams.DescribeStreamInput{
 		StreamArn: aws.String(arn),
@@ -331,11 +345,11 @@ func DynamoDBStreamDescribe(arn string) {
 	// TODO: nilチェック
 	log.Println("[info]shards: ", len((*result).StreamDescription.Shards))
 	for _, shard := range result.StreamDescription.Shards {
-		go DynamoDBStreamShardReader(arn, *(shard).ShardId)
+		go DynamoDBStreamShardReader(arn, *(shard).ShardId, ch)
 	}
 }
 
-func DynamoDBStreamShardReader(arn string, id string) {
+func DynamoDBStreamShardReader(arn string, id string, ch chan Item) {
 	shardIteratorInput := &dynamodbstreams.GetShardIteratorInput{
 		ShardId:           aws.String(id),
 		ShardIteratorType: aws.String("LATEST"),
@@ -347,10 +361,12 @@ func DynamoDBStreamShardReader(arn string, id string) {
 		return
 	}
 	// TODO: nilチェック
-	log.Println("[info] ShardIterator: ", *(shardIterator).ShardIterator)
+	//log.Println("[info] ShardIterator: ", (*shardIterator.ShardIterator)[:64])
 
 	itr := shardIterator.ShardIterator
 	var record *dynamodbstreams.GetRecordsOutput
+
+	//TODO 適切な範囲のforループにしたい
 	for {
 		getRecordInput := &dynamodbstreams.GetRecordsInput{
 			ShardIterator: aws.String(*itr),
@@ -360,10 +376,15 @@ func DynamoDBStreamShardReader(arn string, id string) {
 			log.Println(err)
 			return
 		}
-		log.Println("[info] GetRecords: ", record)
+		//log.Println("[info] GetRecords: ", record.Records)
 		if record.NextShardIterator == nil {
-			log.Println("[info] NextShardIterator not found")
+			log.Println("[info] Shard closed")
 			return
+		}
+		if len(record.Records) > 0 {
+			ch <- Item{
+				Category: *record.Records[0].Dynamodb.Keys["category"].S,
+			}
 		}
 		itr = record.NextShardIterator
 		time.Sleep(StreamInterval)

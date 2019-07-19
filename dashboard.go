@@ -20,13 +20,13 @@ import (
 )
 
 var (
-	Namespace        = "dashboard"
-	DBConnection     = dynamodb.New(session.New())
-	StreamConnection = dynamodbstreams.New(session.New())
-	Version          string
-	ExtAssetDir      string
-	StreamInterval   = time.Second
-	ch               = make(chan Item, 1)
+	Namespace      = "dashboard"
+	DBConn         = dynamodb.New(session.New())
+	StreamConn     = dynamodbstreams.New(session.New())
+	StreamCh       = make(chan Item, 1)
+	Version        string
+	ExtAssetDir    string
+	StreamInterval = time.Second
 )
 
 type DynamoDBItem struct {
@@ -119,8 +119,7 @@ func main() {
 	log.Println("asset directory:", ExtAssetDir)
 	log.Println("namespace:", Namespace)
 
-	// wait DB update
-	go DynamoDBUpdateWatch(ch)
+	go DBUpdateWatch(StreamCh)
 
 	/*
 		if trigger != "" {
@@ -158,7 +157,7 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 
 	if _, t := r.Form["keys"]; t {
-		categories, err := getDynamoDBCategories()
+		categories, err := getDBCategories()
 		if err != nil {
 			log.Println(err)
 			http.Error(w, fmt.Sprintf("%s", err), http.StatusInternalServerError)
@@ -169,7 +168,7 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 		category := strings.TrimPrefix(r.URL.Path, "/api/")
 
 		select {
-		case <-ch:
+		case <-StreamCh:
 			//TODO: continueするとtimeout用のtime.Afterが初期化されて55秒以上待つことになるのでナシ
 			//if res.Category != category {
 			//	continue
@@ -179,7 +178,7 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 			log.Println("[info] timeout")
 		}
 
-		dbItems, err := getDynamoDBItems(category)
+		dbItems, err := getDBItems(category)
 		if err != nil {
 			log.Println(err)
 			http.Error(w, fmt.Sprintf("%s", err), http.StatusInternalServerError)
@@ -194,7 +193,7 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func getDynamoDBItems(category string) ([]*DynamoDBItem, error) {
+func getDBItems(category string) ([]*DynamoDBItem, error) {
 	//aws dynamodb api request
 	input := &dynamodb.QueryInput{
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
@@ -206,7 +205,7 @@ func getDynamoDBItems(category string) ([]*DynamoDBItem, error) {
 		TableName:              aws.String(Namespace),
 	}
 
-	result, err := DBConnection.Query(input)
+	result, err := DBConn.Query(input)
 	if err != nil {
 		DynamoDBConnectionErrorLog(err)
 		return nil, err
@@ -257,13 +256,13 @@ func getDynamoDBItems(category string) ([]*DynamoDBItem, error) {
 
 }
 
-func getDynamoDBCategories() ([]string, error) {
+func getDBCategories() ([]string, error) {
 	input := &dynamodb.ScanInput{
 		ProjectionExpression: aws.String("category"),
 		TableName:            aws.String(Namespace),
 	}
 
-	result, err := DBConnection.Scan(input)
+	result, err := DBConn.Scan(input)
 	if err != nil {
 		DynamoDBConnectionErrorLog(err)
 		return nil, err
@@ -306,13 +305,13 @@ func DynamoDBConnectionErrorLog(err error) error {
 	return err
 }
 
-func DynamoDBUpdateWatch(ch chan Item) {
+func DBUpdateWatch(ch chan Item) {
 	input := &dynamodbstreams.ListStreamsInput{
 		TableName: &Namespace,
 	}
-	result, err := StreamConnection.ListStreams(input)
+	result, err := StreamConn.ListStreams(input)
 	if err != nil {
-		DBStreamConnectionErrorLog(err)
+		StreamConnErrLog(err)
 		return
 	}
 	if result.Streams == nil {
@@ -327,37 +326,37 @@ func DynamoDBUpdateWatch(ch chan Item) {
 	}
 	log.Println("[info] Stream ARN num: ", len(arnList))
 	for _, arn := range arnList {
-		go DynamoDBStreamDescribe(*arn, ch)
+		go DBStreamDescribe(*arn, ch)
 	}
 }
 
-func DynamoDBStreamDescribe(arn string, ch chan Item) {
+func DBStreamDescribe(arn string, ch chan Item) {
 
 	input := &dynamodbstreams.DescribeStreamInput{
 		StreamArn: aws.String(arn),
 	}
-	result, err := StreamConnection.DescribeStream(input)
+	result, err := StreamConn.DescribeStream(input)
 	if err != nil {
-		DBStreamConnectionErrorLog(err)
+		StreamConnErrLog(err)
 		return
 	}
 
 	// TODO: nilチェック
 	log.Println("[info]shards: ", len((*result).StreamDescription.Shards))
 	for _, shard := range result.StreamDescription.Shards {
-		go DynamoDBStreamShardReader(arn, *(shard).ShardId, ch)
+		go StreamShardReader(arn, *(shard).ShardId, ch)
 	}
 }
 
-func DynamoDBStreamShardReader(arn string, id string, ch chan Item) {
+func StreamShardReader(arn string, id string, ch chan Item) {
 	shardIteratorInput := &dynamodbstreams.GetShardIteratorInput{
 		ShardId:           aws.String(id),
 		ShardIteratorType: aws.String("LATEST"),
 		StreamArn:         aws.String(arn),
 	}
-	shardIterator, err := StreamConnection.GetShardIterator(shardIteratorInput)
+	shardIterator, err := StreamConn.GetShardIterator(shardIteratorInput)
 	if err != nil {
-		DBStreamConnectionErrorLog(err)
+		StreamConnErrLog(err)
 		return
 	}
 	// TODO: nilチェック
@@ -371,7 +370,7 @@ func DynamoDBStreamShardReader(arn string, id string, ch chan Item) {
 		getRecordInput := &dynamodbstreams.GetRecordsInput{
 			ShardIterator: aws.String(*itr),
 		}
-		record, err = StreamConnection.GetRecords(getRecordInput)
+		record, err = StreamConn.GetRecords(getRecordInput)
 		if err != nil {
 			log.Println(err)
 			return
@@ -392,7 +391,7 @@ func DynamoDBStreamShardReader(arn string, id string, ch chan Item) {
 
 }
 
-func DBStreamConnectionErrorLog(err error) error {
+func StreamConnErrLog(err error) error {
 	if aerr, ok := err.(awserr.Error); ok {
 		switch aerr.Code() {
 		case dynamodbstreams.ErrCodeResourceNotFoundException:

@@ -349,7 +349,7 @@ func DBStreamDescribe(arn string, ch chan Item) {
 	}
 
 	// TODO: nilチェック
-	log.Println("[info]shards: ", len((*result).StreamDescription.Shards))
+	log.Println("[info] shards: ", len((*result).StreamDescription.Shards))
 	for _, shard := range result.StreamDescription.Shards {
 		go StreamShardReader(arn, *(shard).ShardId, ch)
 	}
@@ -366,13 +366,14 @@ func StreamShardReader(arn string, id string, ch chan Item) {
 		StreamConnErrLog(err)
 		return
 	}
-	// TODO: nilチェック
-	//log.Println("[info] ShardIterator: ", (*shardIterator.ShardIterator)[:64])
 
+	if shardIterator.ShardIterator == nil {
+		log.Println("[err] shardIterator is nil")
+		return
+	}
 	itr := shardIterator.ShardIterator
-	var record *dynamodbstreams.GetRecordsOutput
 
-	//TODO 適切な範囲のforループにしたい
+	var record *dynamodbstreams.GetRecordsOutput
 	for {
 		getRecordInput := &dynamodbstreams.GetRecordsInput{
 			ShardIterator: aws.String(*itr),
@@ -382,15 +383,14 @@ func StreamShardReader(arn string, id string, ch chan Item) {
 			log.Println(err)
 			return
 		}
-		//log.Println("[info] GetRecords: ", record.Records)
-		if record.NextShardIterator == nil {
-			log.Println("[info] Shard closed")
-			return
-		}
-		if len(record.Records) > 0 {
+		if (*record).Records != nil && len(record.Records) > 0 {
 			ch <- Item{
 				Category: *record.Records[0].Dynamodb.Keys["category"].S,
 			}
+		}
+		if record.NextShardIterator == nil {
+			log.Println("[info] Shard closed")
+			return
 		}
 		itr = record.NextShardIterator
 		time.Sleep(StreamInterval)

@@ -134,15 +134,14 @@ var Dashboard = React.createClass({
     }
     var statusFilter = this.state.statusFilter;
     var ajax = $.ajax({
-      url: "/api/" + this.state.currentCategory + "?recurse&wait=55s&index=" + this.state.index || 0,
+      url: "/api/" + this.state.currentCategory + "?" + (this.state.requestType || ""),
       dataType: 'json',
       success: function(data, textStatus, request) {
         var timer = setTimeout(this.loadDashboardFromServer, this.props.pollWait);
-        var index = request.getResponseHeader('X-Consul-Index')
         this.setState({
           items: data,
-          index: index,
           timer: timer,
+          requestType: "update",
         });
       }.bind(this),
       error: function(xhr, status, err) {
@@ -165,7 +164,6 @@ var Dashboard = React.createClass({
     return {
       items: [],
       categories: [],
-      index: 0,
       ajax: undefined,
       timer: undefined,
       statusFilter: "",

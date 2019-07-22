@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -23,7 +24,8 @@ var (
 	Namespace      = "dashboard"
 	DBConn         = dynamodb.New(session.New())
 	StreamConn     = dynamodbstreams.New(session.New())
-	StreamCh       = make(chan Item, 1)
+	StreamCh       = make(map[string]chan bool)
+	StreamChMu     sync.Mutex
 	Version        string
 	ExtAssetDir    string
 	StreamInterval = time.Second
@@ -104,7 +106,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", makeGzipHandler(indexPage))
-	mux.HandleFunc("/api/", makeGzipHandler(kvApiProxy))
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("[info] HandleFunc")
+		makeGzipHandler(kvApiProxy)(w, r)
+	})
 
 	if ExtAssetDir != "" {
 		mux.Handle("/assets/",
@@ -119,7 +124,17 @@ func main() {
 	log.Println("asset directory:", ExtAssetDir)
 	log.Println("namespace:", Namespace)
 
-	go DBUpdateWatch(StreamCh)
+	catList, err := getDBCategories()
+	if err != nil {
+		log.Println(err)
+	}
+	for _, cat := range catList {
+		StreamChMu.Lock()
+		StreamCh[cat] = make(chan bool)
+		StreamChMu.Unlock()
+	}
+
+	go DBUpdateWatch()
 
 	/*
 		if trigger != "" {
@@ -157,6 +172,7 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 
 	if _, t := r.Form["keys"]; t {
+		log.Println("[info] invoke kvApiProxy / keys")
 		categories, err := getDBCategories()
 		if err != nil {
 			log.Println(err)
@@ -165,22 +181,25 @@ func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 		log.Println("keys:", categories)
 		enc.Encode(categories)
 	} else {
+		log.Println("[info] invoke kvApiProxy / items")
 		category := strings.TrimPrefix(r.URL.Path, "/api/")
 		if _, u := r.Form["update"]; u {
+			log.Println("[info] request update")
 			timer := time.After(time.Second * 55)
-		L:
-			for {
+			StreamChMu.Lock()
+			_, ok := StreamCh[category]
+			StreamChMu.Unlock()
+			if ok {
+				ch := StreamCh[category]
+				log.Println("[info] unlock,", ch)
 				select {
-				case item := <-StreamCh:
-					if item.Category != category {
-						continue
-					}
-					log.Println("[info] data update")
-					break L
+				case <-ch:
+					log.Println("[info] category data update")
 				case <-timer:
 					log.Println("[info] timeout")
-					break L
 				}
+			} else {
+				log.Println("[err] Stream category channel not found")
 			}
 		}
 
@@ -312,7 +331,7 @@ func DynamoDBConnectionErrorLog(err error) error {
 	return err
 }
 
-func DBUpdateWatch(ch chan Item) {
+func DBUpdateWatch() {
 	input := &dynamodbstreams.ListStreamsInput{
 		TableName: &Namespace,
 	}
@@ -333,11 +352,11 @@ func DBUpdateWatch(ch chan Item) {
 	}
 	log.Println("[info] Stream ARN num: ", len(arnList))
 	for _, arn := range arnList {
-		go DBStreamDescribe(*arn, ch)
+		go DBStreamDescribe(*arn)
 	}
 }
 
-func DBStreamDescribe(arn string, ch chan Item) {
+func DBStreamDescribe(arn string) {
 
 	input := &dynamodbstreams.DescribeStreamInput{
 		StreamArn: aws.String(arn),
@@ -351,11 +370,11 @@ func DBStreamDescribe(arn string, ch chan Item) {
 	// TODO: nilチェック
 	log.Println("[info] shards: ", len((*result).StreamDescription.Shards))
 	for _, shard := range result.StreamDescription.Shards {
-		go StreamShardReader(arn, *(shard).ShardId, ch)
+		go StreamShardReader(arn, *(shard).ShardId)
 	}
 }
 
-func StreamShardReader(arn string, id string, ch chan Item) {
+func StreamShardReader(arn string, id string) {
 	shardIteratorInput := &dynamodbstreams.GetShardIteratorInput{
 		ShardId:           aws.String(id),
 		ShardIteratorType: aws.String("LATEST"),
@@ -384,9 +403,15 @@ func StreamShardReader(arn string, id string, ch chan Item) {
 			return
 		}
 		if (*record).Records != nil && len(record.Records) > 0 {
-			ch <- Item{
-				Category: *record.Records[0].Dynamodb.Keys["category"].S,
+			log.Println("[info] DB update")
+			cat := *record.Records[0].Dynamodb.Keys["category"].S
+			StreamChMu.Lock()
+			if _, ok := StreamCh[cat]; ok {
+				close(StreamCh[cat])
 			}
+			StreamCh[cat] = make(chan bool)
+			StreamChMu.Unlock()
+
 		}
 		if record.NextShardIterator == nil {
 			log.Println("[info] Shard closed")

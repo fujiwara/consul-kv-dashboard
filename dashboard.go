@@ -11,31 +11,30 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodbstreams"
 )
 
 var (
-	Namespace   = "dashboard"
-	ConsulAddr  = "127.0.0.1:8500"
-	Version     string
-	ExtAssetDir string
-	Nodes       []Node
-	Services    map[string][]string
-	mutex       sync.RWMutex
+	Namespace      = "dashboard"
+	DBConn         = dynamodb.New(session.New())
+	StreamConn     = dynamodbstreams.New(session.New())
+	StreamCh       = make(map[string]chan bool)
+	StreamChMu     sync.Mutex
+	TriggerCh      = make(chan Item)
+	Version        string
+	ExtAssetDir    string
+	Trigger        string
+	StreamInterval = time.Second
 )
-
-type KVPair struct {
-	Key         string
-	CreateIndex int64
-	ModifyIndex int64
-	LockIndex   int64
-	Flags       int64
-	Value       []byte
-}
 
 type Status int64
 
@@ -44,10 +43,61 @@ const (
 	Warning
 	Danger
 	Info
+	Unknown
 )
 
+type DynamoDBItem struct {
+	Category  string
+	NodeKey   string
+	Address   string
+	Timestamp int64
+	Status    Status
+	Data      string
+}
+
+func NewDynamoDBItem(dbItemMap map[string]*dynamodb.AttributeValue) DynamoDBItem {
+	dbItem := DynamoDBItem{
+		Category: *dbItemMap["category"].S,
+		NodeKey:  *dbItemMap["node_key"].S,
+	}
+	if dbItemMap["address"] != nil {
+		if dbItemMap["address"].S != nil {
+			dbItem.Address = *dbItemMap["address"].S
+		}
+	}
+	if dbItemMap["data"] != nil {
+		if dbItemMap["data"].S != nil {
+			dbItem.Data = *dbItemMap["data"].S
+		}
+	}
+	if dbItemMap["timestamp"] != nil {
+		if dbItemMap["timestamp"].N != nil {
+			i, err := strconv.ParseInt(*dbItemMap["timestamp"].N, 10, 64)
+			if err != nil {
+				log.Println(err)
+			}
+			dbItem.Timestamp = i
+		}
+	}
+
+	dbItem.Status = Unknown
+	if dbItemMap["status"] != nil {
+		if dbItemMap["status"].N != nil {
+			i, err := strconv.Atoi(*dbItemMap["status"].N)
+			if err != nil {
+				log.Println(err)
+			} else {
+				if Success <= (Status)(i) && (Status)(i) <= Unknown {
+					dbItem.Status = (Status)(i)
+				}
+			}
+		}
+	}
+	return dbItem
+}
+
 func (s Status) MarshalText() ([]byte, error) {
-	if s <= Info {
+	if s <= Unknown {
 		return []byte(strings.ToLower(s.String())), nil
 	} else {
 		return []byte(strconv.FormatInt(int64(s), 10)), nil
@@ -64,42 +114,34 @@ type Item struct {
 	Data      string `json:"data"`
 }
 
-func (kv *KVPair) NewItem() Item {
+func (dbItem *DynamoDBItem) NewItem() Item {
 	item := Item{
-		Data:      string(kv.Value),
-		Timestamp: time.Unix(kv.Flags/1000, 0).Format("2006-01-02 15:04:05 -0700"),
+		Category:  dbItem.Category,
+		Address:   dbItem.Address,
+		Timestamp: time.Unix(dbItem.Timestamp, 0).Format("2006-01-02 15:04:05 -0700"),
+		Status:    dbItem.Status,
+		Data:      dbItem.Data,
 	}
-	item.Status = Status(kv.Flags % 1000)
-
-	// kv.Key : {namespace}/{category}/{node}/{key}
-	path := strings.Split(kv.Key, "/")
-	item.Category = path[1]
-	if len(path) >= 3 {
-		item.Node = path[2]
-	}
-	if len(path) >= 4 {
-		item.Key = path[3]
+	nodeKey := strings.Split(dbItem.NodeKey, "/")
+	item.Node = nodeKey[0]
+	if len(nodeKey) >= 2 {
+		item.Key = nodeKey[1]
 	}
 	return item
-}
 
-type Node struct {
-	Node    string
-	Address string
 }
 
 func main() {
 	var (
 		port        int
 		showVersion bool
-		trigger     string
 	)
 	flag.StringVar(&Namespace, "namespace", Namespace, "Consul kv top level key name. (/v1/kv/{namespace}/...)")
 	flag.IntVar(&port, "port", 3000, "http listen port")
 	flag.StringVar(&ExtAssetDir, "asset", "", "Serve files located in /assets from local directory. If not specified, use built-in asset.")
 	flag.BoolVar(&showVersion, "v", false, "show vesion")
 	flag.BoolVar(&showVersion, "version", false, "show vesion")
-	flag.StringVar(&trigger, "trigger", "", "trigger command")
+	flag.StringVar(&Trigger, "trigger", "", "trigger command")
 	flag.Parse()
 
 	if showVersion {
@@ -109,7 +151,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", makeGzipHandler(indexPage))
-	mux.HandleFunc("/api/", makeGzipHandler(kvApiProxy))
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("[info] HandleFunc")
+		makeGzipHandler(kvApiProxy)(w, r)
+	})
 
 	if ExtAssetDir != "" {
 		mux.Handle("/assets/",
@@ -123,12 +168,18 @@ func main() {
 	log.Println("listen port:", port)
 	log.Println("asset directory:", ExtAssetDir)
 	log.Println("namespace:", Namespace)
-	if trigger != "" {
-		log.Println("trigger:", trigger)
-		go watchForTrigger(trigger)
+
+	catList, err := getDBCategories()
+	if err != nil {
+		log.Println(err)
 	}
-	go updateNodes()
-	go updateServices()
+	for _, cat := range catList {
+		StreamChMu.Lock()
+		StreamCh[cat] = make(chan bool)
+		StreamChMu.Unlock()
+	}
+
+	go DBUpdateWatch()
 
 	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(port), nil))
 }
@@ -154,147 +205,275 @@ func indexPage(w http.ResponseWriter, r *http.Request) {
 
 func kvApiProxy(w http.ResponseWriter, r *http.Request) {
 	r.ParseForm()
-	path := strings.TrimPrefix(r.URL.Path, "/api/")
-	resp, _, err := callConsulAPI(
-		"/v1/kv/" + Namespace + "/" + path + "?" + r.URL.RawQuery,
-	)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("%s", err), http.StatusInternalServerError)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		w.Header().Set("Content-Type", "application/json")
-		http.Error(w, "[]", resp.StatusCode)
-		return
-	}
-	if resp.StatusCode != http.StatusOK {
-		http.Error(w, "", resp.StatusCode)
-		io.Copy(w, resp.Body)
-		return
-	}
-	// copy response header to client
-	for name, value := range resp.Header {
-		if strings.HasPrefix(name, "X-") || name == "Content-Type" {
-			for _, v := range value {
-				w.Header().Set(name, v)
-			}
-		}
-	}
-
-	// keys or values
-	dec := json.NewDecoder(resp.Body)
 	enc := json.NewEncoder(w)
+
 	if _, t := r.Form["keys"]; t {
-		var keys []string
-		uniqKeyMap := make(map[string]bool)
-		dec.Decode(&keys)
-		for _, key := range keys {
-			path := strings.Split(key, "/")
-			if len(path) >= 2 {
-				uniqKeyMap[path[1]] = true
-			}
+		log.Println("[info] invoke kvApiProxy / keys")
+		categories, err := getDBCategories()
+		if err != nil {
+			log.Println(err)
+			http.Error(w, fmt.Sprintf("%s", err), http.StatusInternalServerError)
 		}
-		uniqKeys := make([]string, 0, len(uniqKeyMap))
-		for key, _ := range uniqKeyMap {
-			uniqKeys = append(uniqKeys, key)
-		}
-		sort.Strings(uniqKeys)
-		enc.Encode(uniqKeys)
+		log.Println("keys:", categories)
+		enc.Encode(categories)
 	} else {
-		var kvps []*KVPair
-		dec.Decode(&kvps)
-		items := make([]Item, 0, len(kvps))
-		for _, kv := range kvps {
-			item := kv.NewItem()
-			if itemInCatalog(&item) {
-				items = append(items, item)
+		log.Println("[info] invoke kvApiProxy / items")
+		category := strings.TrimPrefix(r.URL.Path, "/api/")
+		if _, u := r.Form["update"]; u {
+			log.Println("[info] request update")
+			timer := time.After(time.Second * 55)
+			StreamChMu.Lock()
+			_, ok := StreamCh[category]
+			StreamChMu.Unlock()
+			if ok {
+				ch := StreamCh[category]
+				log.Println("[info] unlock,", ch)
+				select {
+				case <-ch:
+					log.Println("[info] category data update")
+				case <-timer:
+					log.Println("[info] timeout")
+				}
+			} else {
+				log.Println("[err] Stream category channel not found")
 			}
 		}
+
+		log.Println("[info] getDBItems")
+		dbItems, err := getDBItems(category)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, fmt.Sprintf("%s", err), http.StatusInternalServerError)
+		}
+		items := make([]Item, 0, len(dbItems))
+		for _, dbItem := range dbItems {
+			item := dbItem.NewItem()
+			items = append(items, item)
+		}
+		log.Printf("[%s] item num: %d", category, len(items))
 		enc.Encode(items)
 	}
 }
 
-func watchForTrigger(command string) {
-	var index int64
-	lastStatus := make(map[string]Status)
-	prevItem := make(map[Item]Status)
-	for {
-		resp, newIndex, err := callConsulAPI(
-			"/v1/kv/" + Namespace + "/?recurse&wait=55s&index=" + strconv.FormatInt(index, 10),
-		)
-		if err != nil {
-			log.Println("[error]", err)
-			time.Sleep(10 * time.Second)
-			continue
-		}
-		index = newIndex
-		var kvps []*KVPair
-		dec := json.NewDecoder(resp.Body)
-		dec.Decode(&kvps)
-		resp.Body.Close()
+func getDBItems(category string) ([]*DynamoDBItem, error) {
+	//aws dynamodb api request
+	input := &dynamodb.QueryInput{
+		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
+			":categoryName": {
+				S: aws.String(category),
+			},
+		},
+		KeyConditionExpression: aws.String("category = :categoryName"),
+		TableName:              aws.String(Namespace),
+	}
 
-		// find each current item of category
-		currentItem := make(map[string]Item)
-		for _, kv := range kvps {
-			item := kv.NewItem()
-			if !itemInCatalog(&item) {
-				continue
-			}
+	result, err := DBConn.Query(input)
+	if err != nil {
+		DynamoDBConnectionErrorLog(err)
+		return nil, err
+	}
 
-			current := compactItem(item)
-			_, exist := prevItem[current]
-			if exist && prevItem[current] != item.Status {
-				currentItem[item.Category] = item
-			}
-		}
-		for _, kv := range kvps {
-			item := kv.NewItem()
-			if !itemInCatalog(&item) {
-				continue
-			}
-			if _, exist := currentItem[item.Category]; !exist {
-				currentItem[item.Category] = item
-			} else if currentItem[item.Category].Status < item.Status {
-				currentItem[item.Category] = item
-			}
-		}
+	var dbItems []*DynamoDBItem
+	for _, dbItemMap := range (*result).Items {
+		dbItem := NewDynamoDBItem(dbItemMap)
+		dbItems = append(dbItems, &dbItem)
+	}
+	return dbItems, nil
 
-		// invoke trigger when a category status was changed
-		for category, item := range currentItem {
-			if _, exist := lastStatus[category]; !exist {
-				// at first initialize
-				lastStatus[category] = item.Status
-				log.Printf("[info] %s: status %s", category, item.Status)
-			} else if lastStatus[category] != item.Status {
-				// status changed. invoking trigger.
-				log.Printf("[info] %s: status %s -> %s", category, lastStatus[category], item.Status)
-				lastStatus[category] = item.Status
-				b, _ := json.Marshal(item)
-				err := invokePipe(command, bytes.NewReader(b))
-				if err != nil {
-					log.Println("[error]", err)
-				}
-			}
-		}
+}
 
-		// update previous item status
-		for _, kv := range kvps {
-			item := kv.NewItem()
-			prev := compactItem(item)
-			prevItem[prev] = item.Status
-		}
+func getDBCategories() ([]string, error) {
+	input := &dynamodb.ScanInput{
+		ProjectionExpression: aws.String("category"),
+		TableName:            aws.String(Namespace),
+	}
 
-		time.Sleep(1 * time.Second)
+	result, err := DBConn.Scan(input)
+	if err != nil {
+		DynamoDBConnectionErrorLog(err)
+		return nil, err
+	}
+
+	categoriesMap := make(map[string]bool)
+	for _, dbItem := range (*result).Items {
+		if !categoriesMap[*dbItem["category"].S] {
+			categoriesMap[*dbItem["category"].S] = true
+		}
+	}
+
+	var categories []string
+	for key, _ := range categoriesMap {
+		categories = append(categories, key)
+	}
+
+	return categories, nil
+}
+
+func DynamoDBConnectionErrorLog(err error) error {
+	if aerr, ok := err.(awserr.Error); ok {
+		switch aerr.Code() {
+		case dynamodb.ErrCodeProvisionedThroughputExceededException:
+			log.Println(dynamodb.ErrCodeProvisionedThroughputExceededException, aerr.Error())
+		case dynamodb.ErrCodeResourceNotFoundException:
+			log.Println(dynamodb.ErrCodeResourceNotFoundException, aerr.Error())
+		case dynamodb.ErrCodeRequestLimitExceeded:
+			log.Println(dynamodb.ErrCodeRequestLimitExceeded, aerr.Error())
+		case dynamodb.ErrCodeInternalServerError:
+			log.Println(dynamodb.ErrCodeInternalServerError, aerr.Error())
+		default:
+			log.Println(aerr.Error())
+		}
+	} else {
+		// Print the error, cast err to awserr.Error to get the Code and
+		// Message from an error.
+		log.Println(err.Error())
+	}
+	return err
+}
+
+func DBUpdateWatch() {
+	input := &dynamodbstreams.ListStreamsInput{
+		TableName: &Namespace,
+	}
+	result, err := StreamConn.ListStreams(input)
+	if err != nil {
+		StreamConnErrLog(err)
+		return
+	}
+	if result.Streams == nil {
+		log.Println("Stream not found")
+		return
+	}
+	var arnList []*string
+	for _, stream := range result.Streams {
+		if stream.StreamArn != nil {
+			arnList = append(arnList, stream.StreamArn)
+		}
+	}
+	log.Println("[info] Stream ARN num: ", len(arnList))
+	for _, arn := range arnList {
+		go DBStreamDescribe(*arn)
+	}
+
+	// Watch for trigger command
+	if Trigger != "" {
+		log.Println("trigger:", Trigger)
+		go watchForTrigger(Trigger)
 	}
 }
 
-// compactItem builds `Item` struct that has only `Category`, `Key`, and `Node` fields.
-func compactItem(item Item) Item {
-	return Item{
-		Key:      item.Key,
-		Category: item.Category,
-		Node:     item.Node,
+func DBStreamDescribe(arn string) {
+
+	input := &dynamodbstreams.DescribeStreamInput{
+		StreamArn: aws.String(arn),
+	}
+	result, err := StreamConn.DescribeStream(input)
+	if err != nil {
+		StreamConnErrLog(err)
+		return
+	}
+
+	// TODO: nilチェック
+	log.Println("[info] shards: ", len((*result).StreamDescription.Shards))
+	for _, shard := range result.StreamDescription.Shards {
+		go StreamShardReader(arn, *(shard).ShardId)
+	}
+}
+
+func StreamShardReader(arn string, id string) {
+	shardIteratorInput := &dynamodbstreams.GetShardIteratorInput{
+		ShardId:           aws.String(id),
+		ShardIteratorType: aws.String("LATEST"),
+		StreamArn:         aws.String(arn),
+	}
+	shardIterator, err := StreamConn.GetShardIterator(shardIteratorInput)
+	if err != nil {
+		StreamConnErrLog(err)
+		return
+	}
+
+	if shardIterator.ShardIterator == nil {
+		log.Println("[err] shardIterator is nil")
+		return
+	}
+	itr := shardIterator.ShardIterator
+
+	var record *dynamodbstreams.GetRecordsOutput
+	for {
+		getRecordInput := &dynamodbstreams.GetRecordsInput{
+			ShardIterator: aws.String(*itr),
+		}
+		record, err = StreamConn.GetRecords(getRecordInput)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		if (*record).Records != nil && len(record.Records) > 0 {
+			log.Println("[info] DB update")
+			cat := *record.Records[0].Dynamodb.Keys["category"].S
+			StreamChMu.Lock()
+			if _, ok := StreamCh[cat]; ok {
+				close(StreamCh[cat])
+			}
+			StreamCh[cat] = make(chan bool)
+			StreamChMu.Unlock()
+
+			if Trigger != "" {
+				dbitem := NewDynamoDBItem(record.Records[0].Dynamodb.NewImage)
+				TriggerCh <- dbitem.NewItem()
+			}
+
+		}
+		if record.NextShardIterator == nil {
+			log.Println("[info] Shard closed")
+			return
+		}
+		itr = record.NextShardIterator
+		time.Sleep(StreamInterval)
+	}
+
+}
+
+func StreamConnErrLog(err error) error {
+	if aerr, ok := err.(awserr.Error); ok {
+		switch aerr.Code() {
+		case dynamodbstreams.ErrCodeResourceNotFoundException:
+			fmt.Println(dynamodbstreams.ErrCodeResourceNotFoundException, aerr.Error())
+		case dynamodbstreams.ErrCodeLimitExceededException:
+			fmt.Println(dynamodbstreams.ErrCodeLimitExceededException, aerr.Error())
+		case dynamodbstreams.ErrCodeInternalServerError:
+			fmt.Println(dynamodbstreams.ErrCodeInternalServerError, aerr.Error())
+		case dynamodbstreams.ErrCodeExpiredIteratorException:
+			fmt.Println(dynamodbstreams.ErrCodeExpiredIteratorException, aerr.Error())
+		case dynamodbstreams.ErrCodeTrimmedDataAccessException:
+			fmt.Println(dynamodbstreams.ErrCodeTrimmedDataAccessException, aerr.Error())
+		default:
+			fmt.Println(aerr.Error())
+		}
+	} else {
+		// Print the error, cast err to awserr.Error to get the Code and
+		// Message from an error.
+		fmt.Println(err.Error())
+	}
+	return err
+}
+
+func watchForTrigger(command string) {
+	// invoke trigger when a category status was changed
+	var item Item
+	for {
+		select {
+		case item = <-TriggerCh:
+		}
+
+		// status changed. invoking trigger.
+		//TODO: 変更前のstatusを持ってくる
+		//log.Printf("[info] %s: status %s -> %s", category, lastStatus[category], item.Status)
+		b, _ := json.Marshal(item)
+		err := invokePipe(command, bytes.NewReader(b))
+		if err != nil {
+			log.Println("[error]", err)
+		}
 	}
 }
 
@@ -336,87 +515,4 @@ func invokePipe(command string, src io.Reader) error {
 
 	cmdErr := <-cmdCh
 	return cmdErr
-}
-
-func updateNodes() {
-	var index int64
-	for {
-		resp, newIndex, err := callConsulAPI(
-			"/v1/catalog/nodes?index=" + strconv.FormatInt(index, 10) + "&wait=55s",
-		)
-		if err != nil {
-			log.Println("[error]", err)
-			time.Sleep(10 * time.Second)
-			continue
-		}
-		index = newIndex
-		dec := json.NewDecoder(resp.Body)
-		mutex.Lock()
-		dec.Decode(&Nodes)
-		log.Println("[info]", Nodes)
-		mutex.Unlock()
-		time.Sleep(1 * time.Second)
-		resp.Body.Close()
-	}
-}
-
-func updateServices() {
-	var index int64
-	for {
-		resp, newIndex, err := callConsulAPI(
-			"/v1/catalog/services?index=" + strconv.FormatInt(index, 10) + "&wait=55s",
-		)
-		if err != nil {
-			log.Println("[error]", err)
-			time.Sleep(10 * time.Second)
-			continue
-		}
-		index = newIndex
-		dec := json.NewDecoder(resp.Body)
-		mutex.Lock()
-		dec.Decode(&Services)
-		mutex.Unlock()
-		time.Sleep(1 * time.Second)
-		resp.Body.Close()
-	}
-}
-
-func itemInCatalog(item *Item) bool {
-	mutex.RLock()
-	defer mutex.RUnlock()
-	for _, node := range Nodes {
-		if item.Node == node.Node {
-			item.Address = node.Address
-			return true
-		}
-	}
-	for name, tags := range Services {
-		if item.Node == name {
-			item.Address = "service"
-			return true
-		}
-		for _, tag := range tags {
-			if item.Node == fmt.Sprintf("%s.%s", tag, name) {
-				item.Address = "service"
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func callConsulAPI(path string) (*http.Response, int64, error) {
-	var index int64
-	_url := "http://" + ConsulAddr + path
-	log.Println("[info] get", _url)
-	resp, err := http.Get(_url)
-	if err != nil {
-		log.Println("[error]", err)
-		return nil, index, err
-	}
-	_indexes := resp.Header["X-Consul-Index"]
-	if len(_indexes) > 0 {
-		index, _ = strconv.ParseInt(_indexes[0], 10, 64)
-	}
-	return resp, index, nil
 }

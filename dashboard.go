@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,9 +29,21 @@ var (
 	StreamConn     = dynamodbstreams.New(session.New())
 	StreamCh       = make(map[string]chan bool)
 	StreamChMu     sync.Mutex
+	TriggerCh      = make(chan Item)
 	Version        string
 	ExtAssetDir    string
+	Trigger        string
 	StreamInterval = time.Second
+)
+
+type Status int64
+
+const (
+	Success Status = iota
+	Warning
+	Danger
+	Info
+	Unknown
 )
 
 type DynamoDBItem struct {
@@ -40,15 +55,46 @@ type DynamoDBItem struct {
 	Data      string
 }
 
-type Status int64
+func NewDynamoDBItem(dbItemMap map[string]*dynamodb.AttributeValue) DynamoDBItem {
+	dbItem := DynamoDBItem{
+		Category: *dbItemMap["category"].S,
+		NodeKey:  *dbItemMap["node_key"].S,
+	}
+	if dbItemMap["address"] != nil {
+		if dbItemMap["address"].S != nil {
+			dbItem.Address = *dbItemMap["address"].S
+		}
+	}
+	if dbItemMap["data"] != nil {
+		if dbItemMap["data"].S != nil {
+			dbItem.Data = *dbItemMap["data"].S
+		}
+	}
+	if dbItemMap["timestamp"] != nil {
+		if dbItemMap["timestamp"].N != nil {
+			i, err := strconv.ParseInt(*dbItemMap["timestamp"].N, 10, 64)
+			if err != nil {
+				log.Println(err)
+			}
+			dbItem.Timestamp = i
+		}
+	}
 
-const (
-	Success Status = iota
-	Warning
-	Danger
-	Info
-	Unknown
-)
+	dbItem.Status = Unknown
+	if dbItemMap["status"] != nil {
+		if dbItemMap["status"].N != nil {
+			i, err := strconv.Atoi(*dbItemMap["status"].N)
+			if err != nil {
+				log.Println(err)
+			} else {
+				if Success <= (Status)(i) && (Status)(i) <= Unknown {
+					dbItem.Status = (Status)(i)
+				}
+			}
+		}
+	}
+	return dbItem
+}
 
 func (s Status) MarshalText() ([]byte, error) {
 	if s <= Unknown {
@@ -89,14 +135,13 @@ func main() {
 	var (
 		port        int
 		showVersion bool
-		trigger     string
 	)
 	flag.StringVar(&Namespace, "namespace", Namespace, "Consul kv top level key name. (/v1/kv/{namespace}/...)")
 	flag.IntVar(&port, "port", 3000, "http listen port")
 	flag.StringVar(&ExtAssetDir, "asset", "", "Serve files located in /assets from local directory. If not specified, use built-in asset.")
 	flag.BoolVar(&showVersion, "v", false, "show vesion")
 	flag.BoolVar(&showVersion, "version", false, "show vesion")
-	flag.StringVar(&trigger, "trigger", "", "trigger command")
+	flag.StringVar(&Trigger, "trigger", "", "trigger command")
 	flag.Parse()
 
 	if showVersion {
@@ -135,15 +180,6 @@ func main() {
 	}
 
 	go DBUpdateWatch()
-
-	/*
-		if trigger != "" {
-			log.Println("trigger:", trigger)
-			go watchForTrigger(trigger)
-		}
-	*/
-	// go updateNodes()
-	// go updateServices()
 
 	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(port), nil))
 }
@@ -239,43 +275,7 @@ func getDBItems(category string) ([]*DynamoDBItem, error) {
 
 	var dbItems []*DynamoDBItem
 	for _, dbItemMap := range (*result).Items {
-		dbItem := DynamoDBItem{
-			Category: *dbItemMap["category"].S,
-			NodeKey:  *dbItemMap["node_key"].S,
-		}
-		if dbItemMap["address"] != nil {
-			if dbItemMap["address"].S != nil {
-				dbItem.Address = *dbItemMap["address"].S
-			}
-		}
-		if dbItemMap["data"] != nil {
-			if dbItemMap["data"].S != nil {
-				dbItem.Data = *dbItemMap["data"].S
-			}
-		}
-		if dbItemMap["timestamp"] != nil {
-			if dbItemMap["timestamp"].N != nil {
-				i, err := strconv.ParseInt(*dbItemMap["timestamp"].N, 10, 64)
-				if err != nil {
-					log.Println(err)
-				}
-				dbItem.Timestamp = i
-			}
-		}
-
-		dbItem.Status = Unknown
-		if dbItemMap["status"] != nil {
-			if dbItemMap["status"].N != nil {
-				i, err := strconv.Atoi(*dbItemMap["status"].N)
-				if err != nil {
-					log.Println(err)
-				} else {
-					if Success <= (Status)(i) && (Status)(i) <= Unknown {
-						dbItem.Status = (Status)(i)
-					}
-				}
-			}
-		}
+		dbItem := NewDynamoDBItem(dbItemMap)
 		dbItems = append(dbItems, &dbItem)
 	}
 	return dbItems, nil
@@ -354,6 +354,12 @@ func DBUpdateWatch() {
 	for _, arn := range arnList {
 		go DBStreamDescribe(*arn)
 	}
+
+	// Watch for trigger command
+	if Trigger != "" {
+		log.Println("trigger:", Trigger)
+		go watchForTrigger(Trigger)
+	}
 }
 
 func DBStreamDescribe(arn string) {
@@ -412,6 +418,11 @@ func StreamShardReader(arn string, id string) {
 			StreamCh[cat] = make(chan bool)
 			StreamChMu.Unlock()
 
+			if Trigger != "" {
+				dbitem := NewDynamoDBItem(record.Records[0].Dynamodb.NewImage)
+				TriggerCh <- dbitem.NewItem()
+			}
+
 		}
 		if record.NextShardIterator == nil {
 			log.Println("[info] Shard closed")
@@ -447,87 +458,22 @@ func StreamConnErrLog(err error) error {
 	return err
 }
 
-/*
 func watchForTrigger(command string) {
-	var index int64
-	lastStatus := make(map[string]Status)
-	prevItem := make(map[Item]Status)
+	// invoke trigger when a category status was changed
+	var item Item
 	for {
-		resp, newIndex, err := callConsulAPI(
-			"/v1/kv/" + Namespace + "/?recurse&wait=55s&index=" + strconv.FormatInt(index, 10),
-		)
+		select {
+		case item = <-TriggerCh:
+		}
+
+		// status changed. invoking trigger.
+		//TODO: 変更前のstatusを持ってくる
+		//log.Printf("[info] %s: status %s -> %s", category, lastStatus[category], item.Status)
+		b, _ := json.Marshal(item)
+		err := invokePipe(command, bytes.NewReader(b))
 		if err != nil {
 			log.Println("[error]", err)
-			time.Sleep(10 * time.Second)
-			continue
 		}
-		index = newIndex
-		var kvps []*KVPair
-		dec := json.NewDecoder(resp.Body)
-		dec.Decode(&kvps)
-		resp.Body.Close()
-
-		// find each current item of category
-		currentItem := make(map[string]Item)
-		for _, kv := range kvps {
-			item := kv.NewItem()
-			if !itemInCatalog(&item) {
-				continue
-			}
-
-			current := compactItem(item)
-			_, exist := prevItem[current]
-			if exist && prevItem[current] != item.Status {
-				currentItem[item.Category] = item
-			}
-		}
-		for _, kv := range kvps {
-			item := kv.NewItem()
-			if !itemInCatalog(&item) {
-				continue
-			}
-			if _, exist := currentItem[item.Category]; !exist {
-				currentItem[item.Category] = item
-			} else if currentItem[item.Category].Status < item.Status {
-				currentItem[item.Category] = item
-			}
-		}
-
-		// invoke trigger when a category status was changed
-		for category, item := range currentItem {
-			if _, exist := lastStatus[category]; !exist {
-				// at first initialize
-				lastStatus[category] = item.Status
-				log.Printf("[info] %s: status %s", category, item.Status)
-			} else if lastStatus[category] != item.Status {
-				// status changed. invoking trigger.
-				log.Printf("[info] %s: status %s -> %s", category, lastStatus[category], item.Status)
-				lastStatus[category] = item.Status
-				b, _ := json.Marshal(item)
-				err := invokePipe(command, bytes.NewReader(b))
-				if err != nil {
-					log.Println("[error]", err)
-				}
-			}
-		}
-
-		// update previous item status
-		for _, kv := range kvps {
-			item := kv.NewItem()
-			prev := compactItem(item)
-			prevItem[prev] = item.Status
-		}
-
-		time.Sleep(1 * time.Second)
-	}
-}
-
-// compactItem builds `Item` struct that has only `Category`, `Key`, and `Node` fields.
-func compactItem(item Item) Item {
-	return Item{
-		Key:      item.Key,
-		Category: item.Category,
-		Node:     item.Node,
 	}
 }
 
@@ -570,4 +516,3 @@ func invokePipe(command string, src io.Reader) error {
 	cmdErr := <-cmdCh
 	return cmdErr
 }
-*/
